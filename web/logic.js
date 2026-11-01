@@ -134,6 +134,33 @@ export function rank(text, procs, limit = 3) {
     .filter((r) => r.score >= SUGGEST);
 }
 
+/**
+ * 關鍵字搜尋(打字查詢清單用):輸入幾個字(可用空白分成多個關鍵字),列出編號、名稱、別名含有這些字的所有項目。
+ * 每個關鍵字都要找得到;編號開頭 > 編號內含 > 名稱 > 別名,同分維持原本順序。
+ * 回傳 [{proc, score}]。
+ */
+export function search(query, procs) {
+  const tokens = String(query).trim().split(/\s+/).map(normalize).filter(Boolean);
+  if (!tokens.length) return [];
+  const hits = [];
+  procs.forEach((proc, order) => {
+    const name = normalize(proc.name);
+    const aliases = (proc.aliases || []).map(normalize);
+    let score = 0;
+    for (const t of tokens) {
+      let s = 0;
+      if (proc.idKey.startsWith(t)) s = 4;
+      else if (proc.idKey.includes(t)) s = 3;
+      else if (name.includes(t)) s = 2;
+      else if (aliases.some((a) => a.includes(t))) s = 1;
+      if (!s) return; // 有一個關鍵字找不到,這項就不算
+      score += s;
+    }
+    hits.push({ proc, score, order });
+  });
+  return hits.sort((a, b) => b.score - a.score || a.order - b.order).map(({ proc, score }) => ({ proc, score }));
+}
+
 export function isConfident(ranked) {
   if (!ranked.length || ranked[0].score < ACCEPT) return false;
   return ranked.length === 1 || ranked[0].score - ranked[1].score >= MARGIN;

@@ -16,6 +16,7 @@
   <main>
     <h1 id="title">按下「開始」,然後說出測試項目名稱或編號</h1>
     <ol id="steps"></ol>
+    <ul id="results" hidden></ul>
   </main>
 
   <footer>
@@ -38,9 +39,11 @@
     </div>
 
     <form id="typedForm" autocomplete="off">
-      <input id="typed" type="text" placeholder="也可以打字查詢(名稱或編號)" enterkeyhint="search">
+      <input id="typed" type="text" placeholder="輸入名稱或編號" enterkeyhint="search">
+      <button type="button" id="listBtn">清單</button>
       <button type="submit">查詢</button>
     </form>
+    <div class="hint" id="typedHint" hidden>也可以點輸入框,再按鍵盤上的麥克風鍵,用聽寫輸入。</div>
 
     <details>
       <summary>資料與設定</summary>

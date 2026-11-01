@@ -32,6 +32,7 @@ const state = {
   finCurrent: null,
   pending: null,      // 朗讀時被打斷的打字查詢
   awaitingAnswer: false, // 正在問「請問是…嗎?」等是/不是
+  listAll: false,     // 「清單」按鈕:顯示全部項目
   greetOn: true,      // 是否念開場說明(設定裡可關閉)
   greeted: false,     // 這次開啟網頁後是否已念過開場說明,只念第一次
   mode: "auto",       // "auto" 常開監聽 | "ptt" 按住說話
@@ -70,6 +71,54 @@ function highlight(n) {
   const items = [...$("steps").children];
   items.forEach((li, i) => li.classList.toggle("cur", i + 1 === n));
   if (items[n - 1]) items[n - 1].scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
+// ───────────── 打字查詢清單 ─────────────
+
+/** 依輸入框內容(或「清單」按鈕)顯示符合的項目。點項目 = 查詢那一項並朗讀。 */
+function renderResults() {
+  const box = $("results");
+  const main = document.querySelector("main");
+  const q = $("typed").value.trim();
+  $("listBtn").classList.toggle("on", state.listAll);
+  if (!q && !state.listAll) {
+    box.hidden = true;
+    main.classList.remove("searching");
+    return;
+  }
+  let hits = q ? L.search(q, state.procs) : state.procs.map((proc) => ({ proc }));
+  let header;
+  if (!q) header = `全部 ${hits.length} 項,點一下就朗讀`;
+  else if (hits.length) header = `找到 ${hits.length} 項,點一下就朗讀`;
+  else {
+    hits = L.rank(q, state.procs); // 沒有包含這些字的項目:列出聽起來相近的
+    header = hits.length ? `沒有包含「${q}」的項目,以下是相近的` : `找不到「${q}」`;
+  }
+  const head = Object.assign(document.createElement("li"), { className: "resHead", textContent: header });
+  const items = hits.map(({ proc }) => {
+    const li = document.createElement("li");
+    const b = Object.assign(document.createElement("button"), { type: "button", className: "resItem" });
+    b.append(
+      Object.assign(document.createElement("span"), { className: "rid", textContent: proc.id }),
+      Object.assign(document.createElement("span"), { className: "rname", textContent: proc.name }),
+    );
+    if (proc.aliases?.length) {
+      b.append(Object.assign(document.createElement("span"), { className: "ralias", textContent: `別名:${proc.aliases.join("、")}` }));
+    }
+    b.addEventListener("click", () => {
+      $("typed").value = "";
+      $("typed").blur(); // 收起手機鍵盤
+      state.listAll = false;
+      renderResults();
+      submit([proc.id]); // 用編號查詢,等同你說出完整編號
+    });
+    li.append(b);
+    return li;
+  });
+  box.replaceChildren(head, ...items);
+  box.hidden = false;
+  main.classList.add("searching");
+  main.scrollTop = 0;
 }
 
 function showConfirm(question) {
@@ -111,6 +160,7 @@ function applyProcs(procs, source) {
   state.procs = procs;
   state.last = null;
   $("source").textContent = `目前資料:${source}(${procs.length} 項)`;
+  if (typeof renderResults === "function") renderResults();
 }
 
 async function loadInitial() {
@@ -686,7 +736,14 @@ $("typedForm").addEventListener("submit", (e) => {
   e.preventDefault();
   const text = $("typed").value.trim();
   $("typed").value = "";
+  state.listAll = false;
+  renderResults();
   if (text) submit([text]);
+});
+$("typed").addEventListener("input", renderResults);
+$("listBtn").addEventListener("click", () => {
+  state.listAll = !state.listAll;
+  renderResults();
 });
 
 // 聆聽模式切換:常開監聽 / 按住說話
@@ -745,7 +802,7 @@ const isPhone = isIOS || /Android/i.test(navigator.userAgent);
 if (isPhone) {
   const label = document.querySelector('input[name="mode"][value="ptt"] + span');
   if (label) label.textContent = "點擊監聽";
-  $("typed").placeholder = "打字查詢,或點這裡再按鍵盤上的麥克風聽寫";
+  $("typedHint").hidden = false; // 手機鍵盤有聽寫:提示放在輸入框下面(可換行),輸入框裡的提示字保持簡短
 }
 setMode(localStorage.getItem(KEY.mode) || (isIOS ? "ptt" : "auto"), { save: false });
 

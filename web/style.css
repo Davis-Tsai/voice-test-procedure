@@ -61,6 +61,16 @@ summary { cursor: pointer; color: var(--muted); }
 .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; align-items: center; }
 #source { font-weight: 700; }
 #debug { font-size: .75rem; line-height: 1.4; background: #f0f0f2; border-radius: 8px; padding: 8px; max-height: 14em; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+#typedHint { margin-top: 6px; }
+main.searching #title, main.searching #steps { display: none; }
+#results { list-style: none; margin: 0; padding: 0; }
+#results[hidden] { display: none; }
+.resHead { color: var(--muted); font-size: 1rem; margin: 6px 0 8px; }
+.resItem { display: block; width: 100%; text-align: left; padding: 12px 14px; margin: 0 0 8px; background: #fff; border: 1px solid #c8c8cc; border-radius: 12px; }
+.resItem .rid { font-weight: 700; font-size: 1.3rem; margin-right: 10px; }
+.resItem .rname { font-size: 1.3rem; }
+.resItem .ralias { display: block; color: var(--muted); font-size: .9rem; margin-top: 2px; }
+#listBtn.on { background: var(--fg); border-color: var(--fg); color: #fff; }
 .hint { color: var(--muted); font-size: .85rem; line-height: 1.5; }
 
 @media (min-width: 900px) {
