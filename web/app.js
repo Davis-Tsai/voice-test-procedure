@@ -6,7 +6,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const synth = window.speechSynthesis;
-const KEY = { procs: "vtp.procs.v1", source: "vtp.source.v1", rate: "vtp.rate.v1" };
+const KEY = { procs: "vtp.procs.v1", source: "vtp.source.v1", rate: "vtp.rate.v1", mode: "vtp.mode.v1" };
 
 const state = {
   procs: [],
@@ -17,6 +17,8 @@ const state = {
   finCurrent: null,
   pending: null,      // 朗讀時被打斷的打字查詢
   awaitingAnswer: false, // 正在問「請問是…嗎?」等是/不是
+  mode: "auto",       // "auto" 常開監聽 | "ptt" 按住說話
+  ptt: null,          // 按住說話進行中的 {rec, startedAt, ...}
   rec: null,
   typedResolve: null, // 流程正在等輸入時,打字查詢送到這裡
   speakToken: 0,
@@ -53,8 +55,23 @@ function highlight(n) {
 
 function updateButtons() {
   const b = $("micBtn");
-  b.textContent = state.active ? "停止" : "開始";
-  b.classList.toggle("on", state.active);
+  if (state.mode === "ptt") {
+    b.textContent = "按住說話";
+    b.classList.remove("on");
+  } else {
+    b.textContent = state.active ? "停止" : "開始";
+    b.classList.toggle("on", state.active);
+  }
+}
+
+function idleStatus() {
+  if (state.mode === "ptt") setStatus("按住下方按鈕說話", "idle");
+  else setStatus("尚未開始", "idle");
+  if (!state.last) {
+    $("title").textContent = state.mode === "ptt"
+      ? "按住下方按鈕,說出測試項目名稱或編號"
+      : "按下「開始」,然後說出測試項目名稱或編號";
+  }
 }
 
 // ───────────── 資料(Excel)─────────────
@@ -182,7 +199,8 @@ async function read(proc) {
 
 /** 回傳 {text, alts} | {needTap} | {network} | {fatal}。語音辨識與打字查詢誰先到用誰。 */
 function getInput() {
-  setStatus("聆聽中…", "listen");
+  if (state.mode === "ptt") setStatus("按住下方按鈕回答", "listen");
+  else setStatus("聆聽中…", "listen");
   return new Promise((resolve) => {
     let finished = false;
     const finish = (v) => {
@@ -192,16 +210,16 @@ function getInput() {
       state.rec = null;
       resolve(v);
     };
-    state.typedResolve = (t) => {
+    state.typedResolve = (t, alts = [t]) => {
       try { state.rec?.abort(); } catch { /* 已結束 */ }
-      finish({ text: t, alts: [t] });
+      finish({ text: t, alts });
     };
-    if (state.pending) {  // 朗讀時被打字查詢打斷,這段文字就是下一次輸入
-      const t = state.pending;
+    if (state.pending) {  // 朗讀時被打斷的輸入(打字或按住說話),這段就是下一次輸入
+      const { text, alts } = state.pending;
       state.pending = null;
-      return state.typedResolve(t);
+      return state.typedResolve(text, alts);
     }
-    if (!SR) return;
+    if (!SR || state.mode === "ptt") return; // 按住說話模式:由按鈕送結果進來
 
     const r = new SR();
     state.rec = r;
@@ -330,6 +348,98 @@ function stopSession() {
   updateButtons();
 }
 
+/** 打字或按住說話送來的輸入,統一在這裡分流。alts: 辨識候選(打字就是一個字串)。 */
+async function submit(alts) {
+  const text = alts[0];
+  if (!text) return;
+  if (state.typedResolve) return state.typedResolve(text, alts); // 流程正在等輸入
+  if (state.active || state.awaitingAnswer) {                    // 正在朗讀/等回答:打斷它,下一次聆聽直接用這段
+    state.pending = { text, alts };
+    stopSpeaking();
+    return;
+  }
+  const run = ++state.runId;                                     // 單次查詢(念到一半再查詢會打斷舊的)
+  state.handling = true;
+  stopSpeaking();
+  try {
+    const heard = pickAlt(alts, (t) => L.isConfident(L.rank(t, state.procs)) || L.command(t));
+    setHeard(`${state.mode === "ptt" ? "聽到" : "輸入"}:${heard}`);
+    await handle(heard);
+  } finally {
+    if (run === state.runId) {
+      state.handling = false;
+      if (!state.active) idleStatus();
+    }
+  }
+}
+
+// ───────────── 按住說話 ─────────────
+
+const MIN_HOLD_MS = 350;
+
+function pttStart() {
+  if (state.mode !== "ptt" || state.ptt) return;
+  showNotice("");
+  if (!SR) { showNotice("這個瀏覽器不支援語音辨識,請用下方輸入框打字。"); return; }
+  if (!navigator.onLine) {
+    setStatus("沒有網路", "error");
+    speak(["網路沒有連線,請檢查網路。"]);
+    return;
+  }
+  stopSpeaking(); // 按住時先停止朗讀,方便插話
+  keepAwake();
+  const r = new SR();
+  r.lang = "zh-TW";
+  r.maxAlternatives = 3;
+  r.interimResults = false;
+  r.continuous = true; // 按住期間即使停頓也持續收音,放開才結束
+  const press = { rec: r, startedAt: Date.now(), error: null, tooShort: false, results: [] };
+  r.onresult = (e) => { press.results = [...e.results]; };
+  r.onerror = (e) => { press.error = e.error; };
+  r.onend = () => pttFinished(press);
+  state.ptt = press;
+  try { r.start(); } catch { state.ptt = null; showNotice("無法開始收音,請再按一次。"); return; }
+  $("micBtn").classList.add("on");
+  setStatus("聆聽中…(說完放開)", "listen");
+}
+
+function pttEnd() {
+  const press = state.ptt;
+  if (!press) return;
+  $("micBtn").classList.remove("on");
+  if (Date.now() - press.startedAt < MIN_HOLD_MS) {
+    press.tooShort = true;
+    try { press.rec.abort(); } catch { /* 已結束 */ }
+    setStatus("按太短了,請按住說話", "error");
+    return;
+  }
+  setStatus("辨識中…", "think");
+  try { press.rec.stop(); } catch { /* 已結束 */ }
+}
+
+function pttFinished(press) {
+  if (state.ptt === press) state.ptt = null;
+  $("micBtn").classList.remove("on");
+  if (press.tooShort) return;
+  if (press.error === "not-allowed" || press.error === "service-not-allowed") {
+    showNotice("沒有麥克風權限。請在瀏覽器設定允許使用麥克風,或改用下方輸入框打字。");
+    return idleStatus();
+  }
+  if (press.error === "audio-capture") { showNotice("找不到麥克風。"); return idleStatus(); }
+  if (press.error === "network") { showNotice("辨識服務連不上,請檢查網路後再試。"); return idleStatus(); }
+  const alts = collectAlts(press.results);
+  if (!alts.length) { setStatus("沒聽到聲音,請再按住說話", "error"); return; }
+  submit(alts);
+}
+
+/** continuous 模式可能有好幾段結果:只有一段就用它的候選,多段就把各段第一名接起來。 */
+function collectAlts(results) {
+  const segs = results.map((r) => [...r].map((a) => a.transcript.trim()).filter(Boolean)).filter((a) => a.length);
+  if (!segs.length) return [];
+  if (segs.length === 1) return segs[0];
+  return [segs.map((a) => a[0]).join("")];
+}
+
 async function keepAwake() {
   try { state.wake = await navigator.wakeLock?.request("screen"); } catch { /* 不支援就算了 */ }
 }
@@ -337,35 +447,57 @@ async function keepAwake() {
 // ───────────── 事件 ─────────────
 
 $("micBtn").addEventListener("click", () => {
+  if (state.mode === "ptt") return; // 按住說話模式用下面的 pointer 事件
   if (state.active) stopSession();
   else session();
 });
 $("stopSpeakBtn").addEventListener("click", stopSpeaking);
 
-$("typedForm").addEventListener("submit", async (e) => {
+// 按住說話:按下開始、放開結束(用 pointer capture,手指滑出按鈕也會收到放開事件)
+const mic = $("micBtn");
+mic.addEventListener("pointerdown", (e) => {
+  if (state.mode !== "ptt") return;
+  e.preventDefault();
+  try { mic.setPointerCapture(e.pointerId); } catch { /* 不支援就算了 */ }
+  pttStart();
+});
+["pointerup", "pointercancel"].forEach((t) => mic.addEventListener(t, () => state.mode === "ptt" && pttEnd()));
+mic.addEventListener("contextmenu", (e) => state.mode === "ptt" && e.preventDefault());
+// 電腦上也可以按住空白鍵說話(游標不在輸入框時)
+addEventListener("keydown", (e) => {
+  if (state.mode === "ptt" && e.code === "Space" && !e.repeat && !/INPUT|SELECT|TEXTAREA|BUTTON/.test(e.target.tagName)) {
+    e.preventDefault();
+    pttStart();
+  }
+});
+addEventListener("keyup", (e) => {
+  if (state.mode === "ptt" && e.code === "Space") pttEnd();
+});
+
+$("typedForm").addEventListener("submit", (e) => {
   e.preventDefault();
   const text = $("typed").value.trim();
   $("typed").value = "";
-  if (!text) return;
-  if (state.typedResolve) return state.typedResolve(text);   // 連續流程正在等輸入
-  if (state.active || state.awaitingAnswer) {                // 正在朗讀/等回答:打斷它,下一次聆聽直接用這段文字
-    state.pending = text;
-    stopSpeaking();
-    return;
-  }
-  const run = ++state.runId;                                  // 沒按開始:單次查詢(念到一半再查詢會打斷舊的)
-  state.handling = true;
-  stopSpeaking();
-  try {
-    setHeard(`輸入:${text}`);
-    await handle(text);
-  } finally {
-    if (run === state.runId) {
-      state.handling = false;
-      if (!state.active) setStatus("尚未開始", "idle");
-    }
-  }
+  if (text) submit([text]);
 });
+
+// 聆聽模式切換:常開監聽 / 按住說話
+function setMode(mode, { save = true } = {}) {
+  if (state.active) stopSession();
+  if (state.ptt) {
+    try { state.ptt.rec.abort(); } catch { /* 已結束 */ }
+    state.ptt.tooShort = true;
+    state.ptt = null;
+  }
+  state.mode = mode;
+  if (save) localStorage.setItem(KEY.mode, mode);
+  document.querySelectorAll('input[name="mode"]').forEach((r) => { r.checked = r.value === mode; });
+  mic.classList.toggle("ptt", mode === "ptt");
+  showNotice("");
+  updateButtons();
+  idleStatus();
+}
+document.querySelectorAll('input[name="mode"]').forEach((r) => r.addEventListener("change", () => r.checked && setMode(r.value)));
 
 $("file").addEventListener("change", async (e) => {
   const f = e.target.files[0];
@@ -390,5 +522,9 @@ if (savedRate) { state.rate = Number(savedRate); $("rate").value = savedRate; }
 
 if (!SR) showNotice("這個瀏覽器不支援語音辨識(建議用 Chrome、Edge 或 Safari)。仍可用下方輸入框打字查詢,並由語音朗讀。");
 else if (!synth) showNotice("這個瀏覽器不支援語音朗讀。");
+
+// 預設:iPhone/iPad 的 Safari 不允許自動開始聆聽,預設用按住說話;其他裝置預設常開監聽
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+setMode(localStorage.getItem(KEY.mode) || (isIOS ? "ptt" : "auto"), { save: false });
 
 loadInitial().then(updateButtons);

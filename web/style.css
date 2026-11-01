@@ -37,6 +37,15 @@ button, .fileBtn { padding: 10px 14px; cursor: pointer; }
 button:disabled { opacity: .45; cursor: default; }
 button.primary { flex: 1; font-size: 1.3rem; font-weight: 700; padding: 14px; background: var(--speak); border-color: var(--speak); color: #fff; }
 button.primary.on { background: var(--error); border-color: var(--error); }
+button.primary.ptt { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; padding: 22px 14px; }
+.mode { display: flex; gap: 0; margin-bottom: 10px; }
+.mode label { flex: 1; }
+.mode input { position: absolute; opacity: 0; pointer-events: none; }
+.mode span { display: block; text-align: center; padding: 8px 6px; border: 1px solid #c8c8cc; background: #fff; cursor: pointer; }
+.mode label:first-child span { border-radius: 10px 0 0 10px; }
+.mode label:last-child span { border-radius: 0 10px 10px 0; border-left: 0; }
+.mode input:checked + span { background: var(--fg); border-color: var(--fg); color: #fff; font-weight: 700; }
+.mode input:focus-visible + span { outline: 2px solid var(--speak); outline-offset: 2px; }
 #typedForm { display: flex; gap: 8px; margin-top: 10px; }
 #typed { flex: 1; padding: 10px 12px; min-width: 0; }
 details { margin-top: 10px; }

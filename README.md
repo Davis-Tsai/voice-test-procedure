@@ -69,6 +69,10 @@ python -m http.server 8765 --directory web
 **發布到 GitHub Pages:** 把專案推上 GitHub 後,到 Settings → Pages → Source 選「GitHub Actions」,之後每次改 `web/` 並推到 `main` 就會自動發布(設定檔在 `.github/workflows/pages.yml`)。
 注意:Pages 網站是**公開**的(即使專案是 private,免費方案甚至不能對 private 專案開 Pages),所以專案裡只能放程式與範例資料。
 
+**聆聽模式(畫面上方的切換鈕,會記住你的選擇):**
+- **常開監聽**:按「開始」後一直聽,適合安靜環境。
+- **按住說話**:按住大按鈕才收音,放開就結束,適合吵雜環境;電腦上也可以按住空白鍵。按住時如果正在朗讀會先停下來,方便插話。iPhone/iPad 預設用這個模式,因為 Safari 不允許自動開始收音。
+
 和桌面版的差異:
 - 語音辨識與朗讀都由瀏覽器/手機提供,聲音品質依裝置而定;辨識需要網路(Chrome/Edge 送到 Google、Safari 送到 Apple)。
 - iPhone 要先點「開始」才能發聲與收音,之後每一輪是否自動聆聽取決於 Safari;若停下來,再點一次「開始」。
