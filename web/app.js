@@ -266,6 +266,8 @@ async function speak(paragraphs, onPara) {
       onPara?.(n);
       for (const seg of L.segment(paragraphs[n])) {
         if (token !== state.speakToken) return;
+        if (seg.gap) await sleep(seg.gap * 1000);
+        if (token !== state.speakToken) return;
         await utter(seg.text, seg.lang);
       }
       await sleep(550);

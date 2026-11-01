@@ -68,8 +68,23 @@ _UNIT_RE = re.compile(
 )
 
 
+# 一個片段開頭的標點(例如英文編號後面接的「。」)不能交給語音念,否則會被念成「句號」;
+# 把它換成停頓:句號類停久一點,逗號類停短一點。片段中間的標點語音本來就只會停頓,不用處理。
+_LEAD_PUNCT = re.compile(r"^[\s。，、；：！？…,.;:!?「」『』（）()《》【】]+")
+_GAP_LONG = 0.3
+_GAP_SHORT = 0.15
+
+
+def _gap(punct):
+    if any(c in "。；：！？…;:!?." for c in punct):
+        return _GAP_LONG
+    if any(c in "，、," for c in punct):
+        return _GAP_SHORT
+    return 0.0
+
+
 def segment(text):
-    """把一段文字切成 [(語言, 文字)]:英文走英文語音,其餘(中文與數字)走中文語音。"""
+    """把一段文字切成 [(語言, 文字, 前面要停頓幾秒)]:英文走英文語音,其餘(中文與數字)走中文語音。"""
     text = _UNIT_RE.sub(lambda m: m.group(1) + _UNITS[m.group(2)], text)
     parts, pos = [], 0
     for m in _DECIMAL.finditer(text):
@@ -80,13 +95,22 @@ def segment(text):
 
     merged = []  # 相鄰的同語言片段合併,念起來才連貫
     for lang, t in parts:
-        if not re.search(r"\w", t):
-            continue
         if merged and merged[-1][0] == lang:
-            merged[-1] = (lang, merged[-1][1] + (" " if lang == "en" else "") + t.strip())
+            merged[-1] = (lang, merged[-1][1] + (" " if lang == "en" and t.strip() else "") + t)
         else:
-            merged.append((lang, t.strip()))
-    return merged
+            merged.append((lang, t))
+
+    out, pending = [], 0.0
+    for lang, t in merged:
+        m = _LEAD_PUNCT.match(t)
+        lead, rest = (m.group(), t[m.end():]) if m else ("", t)
+        rest = rest.strip()
+        if not re.search(r"\w", rest):  # 只剩標點:變成下一個片段前面的停頓
+            pending += _gap(lead + rest)
+            continue
+        out.append((lang, rest, pending + _gap(lead)))
+        pending = 0.0
+    return out
 
 
 class Speaker:
@@ -111,7 +135,10 @@ class Speaker:
         items = []  # (lang, text, 這個片段之後的停頓秒數, 第幾段)
         for n, para in enumerate(paragraphs):
             segs = segment(para)
-            for i, (lang, text) in enumerate(segs):
+            for i, (lang, text, gap) in enumerate(segs):
+                if gap and items and items[-1][3] == n:  # 前一個片段的結尾多停一下
+                    prev = items[-1]
+                    items[-1] = (prev[0], prev[1], prev[2] + gap, prev[3])
                 items.append((lang, text, self.PAUSE_PARA if i == len(segs) - 1 else self.PAUSE_SEG, n))
         return items
 

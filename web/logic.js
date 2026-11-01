@@ -248,7 +248,12 @@ function splitWords(text) {
   return out;
 }
 
-/** 切成 [{lang, text}]:英文走英文語音,其餘(中文與數字)走中文語音;小數與 IP 用中文念成「點」。 */
+// 一個片段開頭的標點(例如英文編號後面接的「。」)不能交給語音念,否則會被念成「句號」;
+// 把它換成停頓(gap 秒):句號類停久一點,逗號類停短一點。片段中間的標點語音本來就只會停頓,不用處理。
+const LEAD_PUNCT = /^[\s。，、；：！？…,.;:!?「」『』（）()《》【】]+/;
+const gapOf = (p) => (/[。；：！？…;:!?.]/.test(p) ? 0.3 : /[，、,]/.test(p) ? 0.15 : 0);
+
+/** 切成 [{lang, text, gap}]:英文走英文語音,其餘(中文與數字)走中文語音;小數與 IP 用中文念成「點」。 */
 export function segment(input) {
   const text = input.replace(UNIT_RE, (m, num, unit, offset, whole) =>
     isLetter(whole[offset - 1]) ? m : num + UNITS[unit]
@@ -265,10 +270,22 @@ export function segment(input) {
 
   const merged = []; // 相鄰的同語言片段合併,念起來才連貫
   for (const { lang, text: t } of parts) {
-    if (!/[\p{L}\p{N}]/u.test(t)) continue;
     const last = merged[merged.length - 1];
-    if (last && last.lang === lang) last.text += (lang === "en" ? " " : "") + t.trim();
-    else merged.push({ lang, text: t.trim() });
+    if (last && last.lang === lang) last.text += (lang === "en" && t.trim() ? " " : "") + t;
+    else merged.push({ lang, text: t });
   }
-  return merged;
+
+  const out = [];
+  let pending = 0;
+  for (const { lang, text: t } of merged) {
+    const lead = (t.match(LEAD_PUNCT) || [""])[0];
+    const rest = t.slice(lead.length).trim();
+    if (!/[\p{L}\p{N}]/u.test(rest)) { // 只剩標點:變成下一個片段前面的停頓
+      pending += gapOf(lead + rest);
+      continue;
+    }
+    out.push({ lang, text: rest, gap: pending + gapOf(lead) });
+    pending = 0;
+  }
+  return out;
 }
