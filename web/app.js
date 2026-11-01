@@ -67,8 +67,8 @@ function highlight(n) {
 function updateButtons() {
   const b = $("micBtn");
   if (state.mode === "ptt") {
-    b.textContent = "按住說話";
-    b.classList.remove("on");
+    b.textContent = isIOS ? (state.ptt ? "點一下結束" : "點一下說話") : "按住說話";
+    b.classList.toggle("on", !!state.ptt);
   } else {
     b.textContent = state.active ? "停止" : "開始";
     b.classList.toggle("on", state.active);
@@ -76,11 +76,11 @@ function updateButtons() {
 }
 
 function idleStatus() {
-  if (state.mode === "ptt") setStatus("按住下方按鈕說話", "idle");
+  if (state.mode === "ptt") setStatus(isIOS ? "點一下下方按鈕說話" : "按住下方按鈕說話", "idle");
   else setStatus("尚未開始", "idle");
   if (!state.last) {
     $("title").textContent = state.mode === "ptt"
-      ? "按住下方按鈕,說出測試項目名稱或編號"
+      ? (isIOS ? "點一下下方按鈕,說出測試項目名稱或編號" : "按住下方按鈕,說出測試項目名稱或編號")
       : "按下「開始」,然後說出測試項目名稱或編號";
   }
 }
@@ -210,7 +210,7 @@ async function read(proc) {
 
 /** 回傳 {text, alts} | {needTap} | {network} | {fatal}。語音辨識與打字查詢誰先到用誰。 */
 function getInput() {
-  if (state.mode === "ptt") setStatus("按住下方按鈕回答", "listen");
+  if (state.mode === "ptt") setStatus(isIOS ? "點一下下方按鈕回答" : "按住下方按鈕回答", "listen");
   else setStatus("聆聽中…", "listen");
   return new Promise((resolve) => {
     let finished = false;
@@ -236,19 +236,38 @@ function getInput() {
     state.rec = r;
     r.lang = "zh-TW";
     r.maxAlternatives = 3;
-    r.interimResults = false;
+    r.interimResults = true; // 結束時若沒有「最終」結果(iPhone 常見),就用最後一個暫時結果
     r.continuous = false;
     let alts = [];
     let error = null;
-    r.onresult = (e) => { alts = [...e.results[0]].map((a) => a.transcript.trim()).filter(Boolean); };
-    r.onerror = (e) => { error = e.error; };
-    r.onend = () => {
-      if (error === "not-allowed" || error === "service-not-allowed") finish({ fatal: "沒有麥克風權限。請在瀏覽器設定允許使用麥克風,或改用下方輸入框打字。" });
-      else if (error === "audio-capture") finish({ fatal: "找不到麥克風。" });
-      else if (error === "network") finish({ network: true });
-      else finish({ text: alts[0] || "", alts });
+    let errorMessage = "";
+    const t0 = Date.now();
+    r.onstart = () => dbg("常開 辨識 start");
+    r.onaudiostart = () => {
+      dbg("常開 audiostart(麥克風開始收音)");
+      if (state.active && state.mode === "auto") setStatus("聆聽中…請說話", "listen");
     };
-    try { r.start(); } catch { finish({ needTap: true }); }
+    r.onspeechstart = () => dbg("常開 speechstart(偵測到說話)");
+    r.onresult = (e) => {
+      const last = e.results[e.results.length - 1];
+      alts = [...last].map((a) => a.transcript.trim()).filter(Boolean);
+      dbg(`常開 result:${alts.join(" | ")}`);
+    };
+    r.onerror = (e) => {
+      error = e.error;
+      errorMessage = e.message || "";
+      dbg(`常開 error:${e.error}${e.message ? `(${e.message})` : ""}`);
+    };
+    r.onend = () => {
+      const ms = Date.now() - t0;
+      dbg(`常開 end(${ms} 毫秒,${alts.length ? "有結果" : "沒結果"})`);
+      if (error === "not-allowed" || error === "service-not-allowed") finish({ fatal: describeError(error) });
+      else if (error === "audio-capture" && /muted/i.test(errorMessage)) finish({ transient: describeError(error, errorMessage), ms });
+      else if (error === "audio-capture") finish({ fatal: describeError(error, errorMessage) });
+      else if (error === "network") finish({ network: true });
+      else finish({ text: alts[0] || "", alts, ms });
+    };
+    try { r.start(); } catch (err) { dbg(`常開 start() 丟出例外:${err.name} ${err.message}`); finish({ needTap: true }); }
   });
 }
 
@@ -327,11 +346,27 @@ async function session() {
   setStatus("朗讀中", "speak");
   await greeting;
 
+  let fails = 0; // 連續「立刻結束、沒有聽到任何東西」的次數,避免默默空轉
   while (state.active) {
     await ensureOnline();
     if (!state.active) break;
+    // iPhone 的 Safari 朗讀完立刻開麥克風,常常會被判定為「靜音」,等一下再開
+    if (isIOS) await sleep(900);
+    if (!state.active) break;
     const r = await getInput();
     if (!state.active) break;
+
+    if (r.transient || (!r.fatal && !r.network && !r.needTap && !r.alts?.length && r.ms < 1500)) {
+      fails++;
+      dbg(`連續快速失敗 ${fails} 次`);
+      if (fails >= 3) {
+        showNotice(r.transient || "麥克風一直立刻結束、沒有收到聲音。請看「診斷紀錄」;也可以改用下方輸入框,點進去按鍵盤上的麥克風來聽寫。");
+        break;
+      }
+      await sleep(1500);
+      continue;
+    }
+    fails = 0;
 
     if (r.fatal) { showNotice(r.fatal); break; }
     if (r.needTap) { showNotice("這個瀏覽器需要手動點一下才能開始聽,請再按一次「開始」。"); break; }
@@ -416,7 +451,7 @@ async function pttStart() {
   r.maxAlternatives = 3;
   r.interimResults = true; // 放開時若還沒有「最終」結果(iPhone 常見),就用最後一個暫時結果
   r.continuous = !autoEnd(); // 其他裝置:按住期間即使停頓也持續收音,放開才結束
-  const press = { rec: r, startedAt: Date.now(), error: null, errorMessage: "", tooShort: false, released: false, tapMode: false, results: [] };
+  const press = { rec: r, startedAt: Date.now(), error: null, errorMessage: "", tooShort: false, released: false, tapMode: autoEnd(), results: [] };
   press.ended = new Promise((resolve) => { press.resolveEnded = resolve; });
   r.onstart = () => dbg("辨識 start");
   r.onaudiostart = () => {
@@ -442,6 +477,7 @@ async function pttStart() {
     pttFinished(press);
   };
   state.ptt = press;
+  updateButtons();
   $("micBtn").classList.add("on");
   setStatus("準備中…", "think");
   dbg(`pttStart(continuous=${r.continuous})`);
@@ -464,6 +500,7 @@ async function pttStart() {
 }
 
 function pttEnd() {
+  if (autoEnd()) return; // iPhone:點一下開始、再點一下結束,放開手指不算結束
   const press = state.ptt;
   if (!press || press.released) return;
   press.released = true;
@@ -505,6 +542,7 @@ function describeError(code, message = "") {
 function pttFinished(press) {
   if (state.ptt === press) state.ptt = null;
   $("micBtn").classList.remove("on");
+  updateButtons();
   if (press.tooShort) return;
   if (press.error && press.error !== "aborted") {
     showNotice(describeError(press.error, press.errorMessage));
@@ -622,6 +660,11 @@ else if (!synth) showNotice("這個瀏覽器不支援語音朗讀。");
 
 // 預設:iPhone/iPad 的 Safari 不允許自動開始聆聽,預設用按住說話;其他裝置預設常開監聽
 const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+if (isIOS) {
+  const label = document.querySelector('input[name="mode"][value="ptt"] + span');
+  if (label) label.textContent = "點一下說話";
+  $("typed").placeholder = "打字查詢,或點這裡再按鍵盤上的麥克風聽寫";
+}
 setMode(localStorage.getItem(KEY.mode) || (isIOS ? "ptt" : "auto"), { save: false });
 
 loadInitial().then(updateButtons);
