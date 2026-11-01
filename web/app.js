@@ -68,7 +68,7 @@ function highlight(n) {
 function updateButtons() {
   const b = $("micBtn");
   if (state.mode === "ptt") {
-    b.textContent = isPhone ? (state.ptt ? "點一下結束" : "點一下說話") : "按住說話";
+    b.textContent = isPhone ? (state.ptt ? "停止" : "開始") : "按住說話";
     b.classList.toggle("on", !!state.ptt);
   } else {
     b.textContent = state.active ? "停止" : "開始";
@@ -77,11 +77,11 @@ function updateButtons() {
 }
 
 function idleStatus() {
-  if (state.mode === "ptt") setStatus(isPhone ? "點一下下方按鈕說話" : "按住下方按鈕說話", "idle");
+  if (state.mode === "ptt") setStatus(isPhone ? "按「開始」後說話" : "按住下方按鈕說話", "idle");
   else setStatus("尚未開始", "idle");
   if (!state.last) {
     $("title").textContent = state.mode === "ptt"
-      ? (isPhone ? "點一下下方按鈕,說出測試項目名稱或編號" : "按住下方按鈕,說出測試項目名稱或編號")
+      ? (isPhone ? "按下「開始」,然後說出測試項目名稱或編號" : "按住下方按鈕,說出測試項目名稱或編號")
       : "按下「開始」,然後說出測試項目名稱或編號";
   }
 }
@@ -176,7 +176,7 @@ function utter(text, lang) {
     const warn = setTimeout(() => {
       if (started || done) return;
       dbg(`朗讀 2.5 秒內沒有開始:${text.slice(0, 12)}`);
-      showNotice("手機沒有發出朗讀聲:請確認沒有開靜音(側邊撥片)、音量有開,然後點一下按鈕再試。");
+      showNotice("手機沒有發出朗讀聲:請確認沒有開靜音(側邊撥片)、音量有開,然後再按一次「開始」。");
     }, 2500);
     u.onstart = () => { started = true; };
     u.onend = fin;
@@ -233,7 +233,7 @@ async function read(proc) {
 
 /** 回傳 {text, alts} | {needTap} | {network} | {fatal}。語音辨識與打字查詢誰先到用誰。 */
 function getInput() {
-  if (state.mode === "ptt") setStatus(isPhone ? "點一下下方按鈕回答" : "按住下方按鈕回答", "listen");
+  if (state.mode === "ptt") setStatus(isPhone ? "按「開始」後回答" : "按住下方按鈕回答", "listen");
   else setStatus("聆聽中…", "listen");
   return new Promise((resolve) => {
     let finished = false;
@@ -497,7 +497,7 @@ async function pttStart() {
   r.onaudiostart = () => {
     dbg("辨識 audiostart(麥克風開始收音)");
     if (state.ptt !== press) return;
-    if (press.tapMode) setStatus("請說話…(說完停頓即可)", "listen");
+    if (press.tapMode) setStatus("請說話…(說完停頓,或按「停止」)", "listen");
     else if (!press.released) setStatus("請說話…(說完放開)", "listen"); // 等麥克風真的開了再開口,前面的字才不會被吃掉
   };
   r.onspeechstart = () => dbg("辨識 speechstart(偵測到說話)");
@@ -553,7 +553,7 @@ function pttEnd() {
     if (autoEnd()) { // 點一下:改成「點一下說話」,說完停頓就會自動結束
       press.tapMode = true;
       $("micBtn").classList.add("on");
-      setStatus("請說話…(說完停頓即可)", "listen");
+      setStatus("請說話…(說完停頓,或按「停止」)", "listen");
       return;
     }
     press.tooShort = true;
@@ -714,7 +714,7 @@ const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platfor
 const isPhone = isIOS || /Android/i.test(navigator.userAgent);
 if (isPhone) {
   const label = document.querySelector('input[name="mode"][value="ptt"] + span');
-  if (label) label.textContent = "點一下說話";
+  if (label) label.textContent = "點擊監聽";
   $("typed").placeholder = "打字查詢,或點這裡再按鍵盤上的麥克風聽寫";
 }
 setMode(localStorage.getItem(KEY.mode) || (isIOS ? "ptt" : "auto"), { save: false });
