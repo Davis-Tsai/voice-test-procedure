@@ -21,7 +21,7 @@ document.getElementById("version").textContent = `版本:${BUILD.startsWith("__"
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const synth = window.speechSynthesis;
-const KEY = { procs: "vtp.procs.v1", source: "vtp.source.v1", rate: "vtp.rate.v1", mode: "vtp.mode.v1", greet: "vtp.greet.v1" };
+const KEY = { procs: "vtp.procs.v1", source: "vtp.source.v1", rate: "vtp.rate.v1", mode: "vtp.mode.v1", greet: "vtp.greet.v1", readHits: "vtp.readhits.v1" };
 
 const state = {
   procs: [],
@@ -32,6 +32,7 @@ const state = {
   finCurrent: null,
   pending: null,      // 朗讀時被打斷的打字查詢
   awaitingAnswer: false, // 正在問「請問是…嗎?」等是/不是
+  readHits: true,     // 語音查詢找到 1~3 項時是否念出內容(設定裡可關閉)
   listAll: false,     // 「清單」按鈕:顯示全部項目
   greetOn: true,      // 是否念開場說明(設定裡可關閉)
   greeted: false,     // 這次開啟網頁後是否已念過開場說明,只念第一次
@@ -286,7 +287,14 @@ async function say(paragraphs, onPara) {
   await speak(paragraphs, onPara);
 }
 
+function clearSearch() {
+  state.listAll = false;
+  $("typed").value = "";
+  renderResults();
+}
+
 async function read(proc) {
+  clearSearch();
   showProc(proc);
   await say(L.script(proc), highlight);
   highlight(0);
@@ -396,6 +404,38 @@ async function ensureOnline() {
 
 // ───────────── 主流程 ─────────────
 
+/** 語音查詢:把關鍵字放進輸入框、顯示清單,並簡短回應。 */
+async function handleQuery(q) {
+  if (q.type === "close") {
+    clearSearch();
+    setHeard("已收起清單");
+    return;
+  }
+  if (q.type === "all") {
+    $("typed").value = "";
+    state.listAll = true;
+    renderResults();
+    await say([`共 ${state.procs.length} 項,請看畫面。`]);
+    return;
+  }
+  if (!q.keywords) {
+    await say(["請說要查詢的關鍵字,例如:查詢 電源。"]);
+    return;
+  }
+  state.listAll = false;
+  $("typed").value = q.keywords; // 讓你看到查的是什麼,也可以接著用打字修改
+  renderResults();
+  const hits = L.search(q.keywords, state.procs);
+  if (!hits.length) {
+    await say([`找不到含有「${q.keywords}」的項目,請換個說法。`]);
+  } else if (hits.length <= 3 && state.readHits) {
+    const names = hits.map(({ proc }) => `${L.spokenId(proc.id)}。${proc.name}`).join(";");
+    await say([`找到 ${hits.length} 項:${names}。請說編號或名稱。`]);
+  } else {
+    await say([`找到 ${hits.length} 項,請看畫面。`]);
+  }
+}
+
 async function handle(heard) {
   const procs = state.procs;
   const ranked = L.rank(heard, procs);
@@ -412,6 +452,8 @@ async function handle(heard) {
     else await say(["還沒有可以重複的內容,請先說出測試項目。"]);
     return;
   }
+  const query = confident ? null : L.parseQuery(heard);
+  if (query) return handleQuery(query);
 
   let chosen = null;
   if (confident) chosen = ranked[0].proc;
@@ -773,6 +815,10 @@ $("file").addEventListener("change", async (e) => {
 $("sampleBtn").addEventListener("click", async () => { await useSample(); setHeard("已改用範例資料"); });
 $("clearBtn").addEventListener("click", async () => { await useSample(); setHeard("已清除載入的資料,改回範例資料"); });
 
+$("readHits").addEventListener("change", (e) => {
+  state.readHits = e.target.checked;
+  localStorage.setItem(KEY.readHits, e.target.checked ? "1" : "0");
+});
 $("greetOn").addEventListener("change", (e) => {
   state.greetOn = e.target.checked;
   localStorage.setItem(KEY.greet, e.target.checked ? "1" : "0");
@@ -787,6 +833,8 @@ document.addEventListener("visibilitychange", () => {
 
 // ───────────── 啟動 ─────────────
 
+state.readHits = localStorage.getItem(KEY.readHits) !== "0";
+$("readHits").checked = state.readHits;
 state.greetOn = localStorage.getItem(KEY.greet) !== "0";
 $("greetOn").checked = state.greetOn;
 

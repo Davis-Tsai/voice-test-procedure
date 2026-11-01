@@ -161,6 +161,25 @@ export function search(query, procs) {
   return hits.sort((a, b) => b.score - a.score || a.order - b.order).map(({ proc, score }) => ({ proc, score }));
 }
 
+/**
+ * 語音「查詢」指令:句首是 查詢/搜尋/找/列出(或 search/find/list)才算,後面接關鍵字。
+ *  {type:"search", keywords}  顯示含有關鍵字的項目清單
+ *  {type:"all"}               顯示全部項目
+ *  {type:"close"}             收起清單
+ *  null                       不是查詢指令
+ * 只認句首,所以「檢查電源」裡的「查」不會被誤判。
+ */
+export function parseQuery(text) {
+  const t = String(text).trim().replace(/^[\s,。.,!?!?、]+|[\s,。.,!?!?、]+$/g, "");
+  if (/^(關閉|关闭|收起|隱藏|隐藏)(項目)?(清單|清单|列表)?$/.test(t) || /^(close|hide)(\s+list)?$/i.test(t)) return { type: "close" };
+  if (/^(全部|所有|全部項目|所有項目|全部项目|所有项目|項目清單|项目清单|項目列表|项目列表|清單|清单|列表)$/.test(t)) return { type: "all" };
+  const m = t.match(/^(?:查詢|查询|搜尋|搜寻|搜索|尋找|寻找|查找|列出|找|search|find|list)\s*(.*)$/i);
+  if (!m) return null;
+  const kw = m[1].replace(/^[\s,。.,!?!?、::]+|[\s,。.,!?!?、::]+$/g, "");
+  if (/^(全部|所有)(項目|项目)?$/.test(kw) || /^all$/i.test(kw)) return { type: "all" };
+  return { type: "search", keywords: kw };
+}
+
 export function isConfident(ranked) {
   if (!ranked.length || ranked[0].score < ACCEPT) return false;
   return ranked.length === 1 || ranked[0].score - ranked[1].score >= MARGIN;
