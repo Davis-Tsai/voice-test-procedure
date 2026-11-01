@@ -43,7 +43,7 @@ const state = {
   rec: null,
   typedResolve: null, // 流程正在等輸入時,打字查詢送到這裡
   speakToken: 0,
-  rate: 1.2,          // 朗讀速度預設「快」(設定裡可改,改了會記住)
+  rate: 1.2,          // 朗讀速度預設「正常」(設定裡可改,改了會記住)
   wake: null,
 };
 
@@ -841,8 +841,11 @@ state.greetOn = localStorage.getItem(KEY.greet) !== "0";
 $("greetOn").checked = state.greetOn;
 
 const savedRate = localStorage.getItem(KEY.rate);
-if (savedRate) { state.rate = Number(savedRate); $("rate").value = savedRate; }
-else $("rate").value = String(state.rate);
+// 速度選項:慢 1、正常 1.2、快 1.45。以前存的是舊選項(0.85 / 1 / 1.2),換成最接近的新選項,
+// 這樣原本的速度不變,只是名稱各往上一級
+const RATES = [1, 1.2, 1.45];
+if (savedRate) state.rate = RATES.reduce((best, r) => (Math.abs(r - Number(savedRate)) < Math.abs(best - Number(savedRate)) ? r : best));
+$("rate").value = String(state.rate);
 
 if (!SR) showNotice("這個瀏覽器不支援語音辨識(建議用 Chrome、Edge 或 Safari)。仍可用下方輸入框打字查詢,並由語音朗讀。");
 else if (!synth) showNotice("這個瀏覽器不支援語音朗讀。");
