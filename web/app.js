@@ -43,7 +43,7 @@ const state = {
   rec: null,
   typedResolve: null, // 流程正在等輸入時,打字查詢送到這裡
   speakToken: 0,
-  rate: 1,
+  rate: 1.2,          // 朗讀速度預設「快」(設定裡可改,改了會記住)
   wake: null,
 };
 
@@ -842,6 +842,7 @@ $("greetOn").checked = state.greetOn;
 
 const savedRate = localStorage.getItem(KEY.rate);
 if (savedRate) { state.rate = Number(savedRate); $("rate").value = savedRate; }
+else $("rate").value = String(state.rate);
 
 if (!SR) showNotice("這個瀏覽器不支援語音辨識(建議用 Chrome、Edge 或 Safari)。仍可用下方輸入框打字查詢,並由語音朗讀。");
 else if (!synth) showNotice("這個瀏覽器不支援語音朗讀。");
