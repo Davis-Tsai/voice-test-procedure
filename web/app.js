@@ -21,7 +21,7 @@ document.getElementById("version").textContent = `版本:${BUILD.startsWith("__"
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const synth = window.speechSynthesis;
-const KEY = { procs: "vtp.procs.v1", source: "vtp.source.v1", rate: "vtp.rate.v1", mode: "vtp.mode.v1" };
+const KEY = { procs: "vtp.procs.v1", source: "vtp.source.v1", rate: "vtp.rate.v1", mode: "vtp.mode.v1", greet: "vtp.greet.v1" };
 
 const state = {
   procs: [],
@@ -32,6 +32,8 @@ const state = {
   finCurrent: null,
   pending: null,      // 朗讀時被打斷的打字查詢
   awaitingAnswer: false, // 正在問「請問是…嗎?」等是/不是
+  greetOn: true,      // 是否念開場說明(設定裡可關閉)
+  greeted: false,     // 這次開啟網頁後是否已念過開場說明,只念第一次
   mode: "auto",       // "auto" 常開監聽 | "ptt" 按住說話
   ptt: null,          // 按住說話進行中的 {rec, startedAt, ...}
   prevEnded: null,    // 最近一次辨識(不論哪種模式)結束的 Promise,新的辨識要等它
@@ -393,10 +395,15 @@ async function session() {
   updateButtons();
   keepAwake();
   showNotice("");
-  // 開場白要在使用者點擊的當下就開始念,iPhone 才允許發聲
-  const greeting = speak(["系統已就緒。請說出測試項目名稱或編號。說「重複」可以重新朗讀,說「結束」離開。"]);
-  setStatus("朗讀中", "speak");
-  await greeting;
+  if (state.greetOn && !state.greeted) {
+    // 開場說明只在開啟網頁後的第一次念,而且要在使用者點擊的當下就開始念,iPhone 才允許發聲
+    state.greeted = true;
+    const greeting = speak(["系統已就緒。請說出測試項目名稱或編號。說「重複」可以重新朗讀,說「結束」離開。"]);
+    setStatus("朗讀中", "speak");
+    await greeting;
+  } else {
+    unlockSpeech(); // 不念說明時,也要在點擊當下解鎖朗讀,之後的結果才念得出聲音
+  }
 
   let fails = 0; // 連續「立刻結束、沒有聽到任何東西」的次數,避免默默空轉
   while (state.active) {
@@ -709,6 +716,10 @@ $("file").addEventListener("change", async (e) => {
 $("sampleBtn").addEventListener("click", async () => { await useSample(); setHeard("已改用範例資料"); });
 $("clearBtn").addEventListener("click", async () => { await useSample(); setHeard("已清除載入的資料,改回範例資料"); });
 
+$("greetOn").addEventListener("change", (e) => {
+  state.greetOn = e.target.checked;
+  localStorage.setItem(KEY.greet, e.target.checked ? "1" : "0");
+});
 $("rate").addEventListener("change", (e) => {
   state.rate = Number(e.target.value);
   localStorage.setItem(KEY.rate, e.target.value);
@@ -718,6 +729,9 @@ document.addEventListener("visibilitychange", () => {
 });
 
 // ───────────── 啟動 ─────────────
+
+state.greetOn = localStorage.getItem(KEY.greet) !== "0";
+$("greetOn").checked = state.greetOn;
 
 const savedRate = localStorage.getItem(KEY.rate);
 if (savedRate) { state.rate = Number(savedRate); $("rate").value = savedRate; }
