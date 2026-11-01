@@ -1,5 +1,8 @@
 // 語音查詢測試步驟(網頁版):瀏覽器語音辨識 → 比對 Excel 項目 → 瀏覽器語音朗讀。
-import * as L from "./logic.js";
+// __BUILD__ 會在 GitHub Actions 發布時換成這次的 commit 編號,讓瀏覽器每次發布都重新下載新檔案,不會吃到舊快取
+import * as L from "./logic.js?v=__BUILD__";
+
+const BUILD = "__BUILD__";
 
 const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -13,6 +16,8 @@ function dbg(msg) {
   const el = document.getElementById("debug");
   if (el) el.textContent = dbgLines.join("\n");
 }
+
+document.getElementById("version").textContent = `版本:${BUILD.startsWith("__") ? "本機開發版" : BUILD}`;
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const synth = window.speechSynthesis;

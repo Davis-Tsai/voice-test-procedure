@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>語音查詢測試步驟</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=__BUILD__">
 </head>
 <body>
   <header>
@@ -60,6 +60,7 @@
             </select>
           </label>
         </div>
+        <div class="hint" id="version"></div>
         <details>
           <summary>診斷紀錄(語音辨識有問題時,請把這裡的內容截圖給開發者)</summary>
           <pre id="debug"></pre>
@@ -74,6 +75,6 @@
   </footer>
 
   <script src="vendor/xlsx.full.min.js"></script>
-  <script type="module" src="app.js"></script>
+  <script type="module" src="app.js?v=__BUILD__"></script>
 </body>
 </html>
