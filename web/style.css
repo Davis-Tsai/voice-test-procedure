@@ -38,6 +38,13 @@ button:disabled { opacity: .45; cursor: default; }
 button.primary { flex: 1; font-size: 1.3rem; font-weight: 700; padding: 14px; background: var(--speak); border-color: var(--speak); color: #fff; }
 button.primary.on { background: var(--error); border-color: var(--error); }
 button.primary.ptt { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; padding: 22px 14px; }
+#confirm { margin-bottom: 10px; padding: 10px; background: #fff4e5; border: 1px solid #f5c26b; border-radius: 12px; }
+#confirm[hidden] { display: none; }
+#confirmQ { font-size: 1.2rem; font-weight: 700; margin-bottom: 8px; word-break: break-word; }
+.yn { display: flex; gap: 10px; }
+.yn button { flex: 1; font-size: 1.5rem; font-weight: 700; padding: 14px; }
+.yn .yes { background: var(--listen); border-color: var(--listen); color: #fff; }
+.yn .no { background: #fff; border-color: var(--error); color: var(--error); }
 .mode { display: flex; gap: 0; margin-bottom: 10px; }
 .mode label { flex: 1; }
 .mode input { position: absolute; opacity: 0; pointer-events: none; }

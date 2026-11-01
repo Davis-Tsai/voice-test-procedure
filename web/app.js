@@ -65,6 +65,12 @@ function highlight(n) {
   if (items[n - 1]) items[n - 1].scrollIntoView({ block: "center", behavior: "smooth" });
 }
 
+function showConfirm(question) {
+  $("confirmQ").textContent = question;
+  $("confirm").hidden = false;
+}
+const hideConfirm = () => { $("confirm").hidden = true; };
+
 function updateButtons() {
   const b = $("micBtn");
   if (state.mode === "ptt") {
@@ -355,7 +361,8 @@ async function handle(heard) {
   else {
     state.awaitingAnswer = true;
     for (const { proc } of ranked) { // 不太確定:逐一詢問最接近的幾個
-      setHeard(`聽到:${heard}  →  請問是 ${proc.id} ${proc.name} 嗎?`);
+      setHeard(`聽到:${heard}`);
+      showConfirm(`請問是 ${proc.id} ${proc.name} 嗎?`); // 也可以直接點下面的「是 / 不是」
       await say([`請問是 ${L.spokenId(proc.id)}。${proc.name} 嗎?請回答是或不是。`]);
       let ans = null;
       for (let i = 0; i < 2; i++) {
@@ -365,6 +372,7 @@ async function handle(heard) {
       if (ans) { chosen = proc; break; }
     }
     state.awaitingAnswer = false;
+    hideConfirm();
   }
   if (!chosen) {
     setHeard(`聽到:${heard}  (找不到對應的測試項目)`);
@@ -430,6 +438,7 @@ function stopSession() {
   state.wake?.release?.().catch(() => {});
   state.wake = null;
   setStatus("已停止", "idle");
+  hideConfirm();
   updateButtons();
 }
 
@@ -632,6 +641,8 @@ $("micBtn").addEventListener("click", () => {
   else session();
 });
 $("stopSpeakBtn").addEventListener("click", stopSpeaking);
+$("yesBtn").addEventListener("click", () => submit(["是"]));
+$("noBtn").addEventListener("click", () => submit(["不是"]));
 
 // 按住說話:按下開始、放開結束(用 pointer capture,手指滑出按鈕也會收到放開事件)
 const mic = $("micBtn");
