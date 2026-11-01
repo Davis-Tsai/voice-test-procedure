@@ -68,7 +68,7 @@ function highlight(n) {
 function updateButtons() {
   const b = $("micBtn");
   if (state.mode === "ptt") {
-    b.textContent = isIOS ? (state.ptt ? "點一下結束" : "點一下說話") : "按住說話";
+    b.textContent = isPhone ? (state.ptt ? "點一下結束" : "點一下說話") : "按住說話";
     b.classList.toggle("on", !!state.ptt);
   } else {
     b.textContent = state.active ? "停止" : "開始";
@@ -77,11 +77,11 @@ function updateButtons() {
 }
 
 function idleStatus() {
-  if (state.mode === "ptt") setStatus(isIOS ? "點一下下方按鈕說話" : "按住下方按鈕說話", "idle");
+  if (state.mode === "ptt") setStatus(isPhone ? "點一下下方按鈕說話" : "按住下方按鈕說話", "idle");
   else setStatus("尚未開始", "idle");
   if (!state.last) {
     $("title").textContent = state.mode === "ptt"
-      ? (isIOS ? "點一下下方按鈕,說出測試項目名稱或編號" : "按住下方按鈕,說出測試項目名稱或編號")
+      ? (isPhone ? "點一下下方按鈕,說出測試項目名稱或編號" : "按住下方按鈕,說出測試項目名稱或編號")
       : "按下「開始」,然後說出測試項目名稱或編號";
   }
 }
@@ -233,7 +233,7 @@ async function read(proc) {
 
 /** 回傳 {text, alts} | {needTap} | {network} | {fatal}。語音辨識與打字查詢誰先到用誰。 */
 function getInput() {
-  if (state.mode === "ptt") setStatus(isIOS ? "點一下下方按鈕回答" : "按住下方按鈕回答", "listen");
+  if (state.mode === "ptt") setStatus(isPhone ? "點一下下方按鈕回答" : "按住下方按鈕回答", "listen");
   else setStatus("聆聽中…", "listen");
   return new Promise((resolve) => {
     let finished = false;
@@ -462,9 +462,10 @@ async function submit(alts) {
 
 const MIN_HOLD_MS = 350;
 
-// iPhone 的 Safari 用 continuous 模式容易失敗(被靜音、沒偵測到說話),改成「停頓就自動結束」;
-// 所以 iPhone 上除了按住說話,點一下也可以(說完停頓即自動結束,再點一次可以提早結束)。
-const autoEnd = () => isIOS;
+// 手機(iPhone、Android)一律用「點一下開始,說完停頓自動結束,再點一次可提早結束」:
+// iPhone 的 Safari 用 continuous 模式容易失敗(被靜音、沒偵測到說話),
+// Android 的 Chrome 用 continuous 模式會重複吐出累積的文字。電腦才用按住說話。
+const autoEnd = () => isPhone;
 
 async function pttStart() {
   if (state.mode !== "ptt") return;
@@ -489,7 +490,7 @@ async function pttStart() {
   r.lang = "zh-TW";
   r.maxAlternatives = 3;
   r.interimResults = true; // 放開時若還沒有「最終」結果(iPhone 常見),就用最後一個暫時結果
-  r.continuous = !autoEnd(); // 其他裝置:按住期間即使停頓也持續收音,放開才結束
+  r.continuous = !autoEnd(); // 電腦:按住期間即使停頓也持續收音,放開才結束
   const press = { rec: r, startedAt: Date.now(), error: null, errorMessage: "", tooShort: false, released: false, tapMode: autoEnd(), results: [] };
   press.ended = new Promise((resolve) => { press.resolveEnded = resolve; });
   r.onstart = () => dbg("辨識 start");
@@ -541,7 +542,7 @@ async function pttStart() {
 }
 
 function pttEnd() {
-  if (autoEnd()) return; // iPhone:點一下開始、再點一下結束,放開手指不算結束
+  if (autoEnd()) return; // 手機:點一下開始、再點一下結束,放開手指不算結束
   const press = state.ptt;
   if (!press || press.released) return;
   press.released = true;
@@ -619,8 +620,8 @@ async function keepAwake() {
 
 $("micBtn").addEventListener("click", () => {
   if (state.mode === "ptt") {
-    // iPhone:點一下開始、再點一下結束。click 才會被當成「使用者操作」,朗讀與收音都需要這個
-    if (isIOS) {
+    // 手機:點一下開始、再點一下結束。click 才會被當成「使用者操作」,朗讀與收音都需要這個
+    if (isPhone) {
       dbg(state.ptt ? "click(結束)" : "click(開始)");
       if (!state.ptt) unlockSpeech();
       pttStart();
@@ -635,14 +636,14 @@ $("stopSpeakBtn").addEventListener("click", stopSpeaking);
 // 按住說話:按下開始、放開結束(用 pointer capture,手指滑出按鈕也會收到放開事件)
 const mic = $("micBtn");
 mic.addEventListener("pointerdown", (e) => {
-  if (state.mode !== "ptt" || isIOS) return;
+  if (state.mode !== "ptt" || isPhone) return;
   e.preventDefault();
   dbg(`pointerdown(${e.pointerType})`);
   try { mic.setPointerCapture(e.pointerId); } catch { /* 不支援就算了 */ }
   pttStart();
 });
 ["pointerup", "pointercancel"].forEach((t) => mic.addEventListener(t, () => {
-  if (state.mode !== "ptt" || isIOS) return;
+  if (state.mode !== "ptt" || isPhone) return;
   dbg(t);
   pttEnd();
 }));
@@ -710,7 +711,8 @@ else if (!synth) showNotice("這個瀏覽器不支援語音朗讀。");
 
 // 預設:iPhone/iPad 的 Safari 不允許自動開始聆聽,預設用按住說話;其他裝置預設常開監聽
 const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-if (isIOS) {
+const isPhone = isIOS || /Android/i.test(navigator.userAgent);
+if (isPhone) {
   const label = document.querySelector('input[name="mode"][value="ptt"] + span');
   if (label) label.textContent = "點一下說話";
   $("typed").placeholder = "打字查詢,或點這裡再按鍵盤上的麥克風聽寫";
