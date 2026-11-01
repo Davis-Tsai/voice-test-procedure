@@ -401,11 +401,14 @@ function pttStart() {
   const r = new SR();
   r.lang = "zh-TW";
   r.maxAlternatives = 3;
-  r.interimResults = false;
+  r.interimResults = true; // 放開時若還沒有「最終」結果(iPhone 常見),就用最後一個暫時結果
   r.continuous = true; // 按住期間即使停頓也持續收音,放開才結束
   const press = { rec: r, startedAt: Date.now(), error: null, tooShort: false, released: false, results: [] };
   r.onstart = () => dbg("辨識 start");
-  r.onaudiostart = () => dbg("辨識 audiostart(麥克風開始收音)");
+  r.onaudiostart = () => {
+    dbg("辨識 audiostart(麥克風開始收音)");
+    if (state.ptt === press && !press.released) setStatus("請說話…(說完放開)", "listen"); // 等麥克風真的開了再開口,前面的字才不會被吃掉
+  };
   r.onspeechstart = () => dbg("辨識 speechstart(偵測到說話)");
   r.onnomatch = () => dbg("辨識 nomatch");
   r.onresult = (e) => {
@@ -414,6 +417,7 @@ function pttStart() {
   };
   r.onerror = (e) => {
     press.error = e.error;
+    press.errorMessage = e.message || "";
     dbg(`辨識 error:${e.error}${e.message ? `(${e.message})` : ""}`);
   };
   r.onend = () => { dbg(`辨識 end(${press.released ? "已放開" : "還沒放開就結束了"})`); pttFinished(press); };
@@ -421,7 +425,7 @@ function pttStart() {
   dbg(`pttStart(continuous=${r.continuous})`);
   try { r.start(); } catch (err) { dbg(`start() 丟出例外:${err.name} ${err.message}`); state.ptt = null; showNotice("無法開始收音,請再按一次。"); return; }
   $("micBtn").classList.add("on");
-  setStatus("聆聽中…(說完放開)", "listen");
+  setStatus("準備中…", "think");
 }
 
 function pttEnd() {
@@ -463,7 +467,12 @@ function pttFinished(press) {
   }
   const alts = collectAlts(press.results);
   if (!alts.length) {
-    showNotice(press.released ? "沒有收到辨識結果,請再按住說話。" : "收音自己提早結束了,沒有收到辨識結果。請再按住說話,並看「診斷紀錄」。");
+    const noSpeech = /no speech/i.test(press.errorMessage || "") || press.error === "no-speech";
+    showNotice(noSpeech
+      ? "沒有偵測到說話聲。請按住後等畫面出現「請說話」再開口,並靠近麥克風、說大聲一點。"
+      : press.released
+        ? "沒有收到辨識結果,請再按住說話。"
+        : "收音自己提早結束了,沒有收到辨識結果。請再按住說話,並看「診斷紀錄」。");
     setStatus("沒聽到聲音,請再按住說話", "error");
     return;
   }
