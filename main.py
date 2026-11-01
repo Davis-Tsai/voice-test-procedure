@@ -8,11 +8,13 @@ import traceback
 from pathlib import Path
 
 import procedures as pr
-from speech_io import Listener, NetworkError, Speaker, TextListener, forget_network
+from settings import Settings
+from speech_io import Listener, NetworkError, Speaker, forget_network
 from ui import NullUI, WindowUI
 
 DEFAULT_EXCEL = "procedures.xlsx"
 SAMPLE_EXCEL = "procedures.sample.xlsx"
+INTRO = "系統已就緒。請說出測試項目名稱或編號。說「重複」可以重新朗讀,說「結束」離開。"
 
 
 def spoken_id(pid):
@@ -57,85 +59,286 @@ def wait_for_network(listener, speaker, ui):
     return True
 
 
-def run(procs, listener, speaker, ui, text_mode):
-    """語音主流程。"""
-    listener.on_recognizing = lambda: ui.status("辨識中…", "think")
+class Voice:
+    """語音主流程。畫面按鈕、打字、語音都變成事件,依序在這裡處理(跑在背景執行緒)。
 
-    def say(paragraphs, on_start=None):
-        ui.status("朗讀中", "speak")
-        speaker.speak(paragraphs, on_start)
+    mode:  "auto" 常開監聽(按「開始」後一直聽)| "tap" 點擊監聽(按「開始」只聽一句話)
+    active: 目前是否在聆聽(常開:整段期間;點擊:這一句)
+    """
 
-    def listen():
-        """聆聽並辨識;沒網路時語音告知並等到連線恢復。"""
-        while True:
-            if wait_for_network(listener, speaker, ui):
-                say(["網路已恢復。"])
-            print("請輸入:" if text_mode else "聆聽中…")
-            ui.status("聆聽中…", "listen")
+    def __init__(self, procs, listener, speaker, ui, settings):
+        self.procs, self.listener, self.speaker, self.ui, self.settings = procs, listener, speaker, ui, settings
+        self.mode = settings.mode
+        self.active = False
+        self.capturing = False
+        self.cap_id = 0
+        self.cancel = None
+        self.greeted = False
+        self.last = None
+        self.quit = False
+        listener.on_recognizing = lambda: ui.status("辨識中…", "think")
+
+    # ───── 朗讀 ─────
+    def say(self, paragraphs, on_start=None):
+        self.ui.status("朗讀中", "speak")
+        self.speaker.speak(paragraphs, on_start)
+
+    def read(self, proc):
+        self.ui.clear_search()
+        self.ui.show(proc)
+        self.ui.highlight(0)
+        print(f"→ {proc.id} {proc.name}")
+        self.say(script(proc), on_start=self.ui.highlight)
+        self.ui.highlight(0)
+
+    # ───── 聆聽(背景錄音,結果以事件送回來)─────
+    def start_capture(self):
+        if self.capturing:
+            return
+        self.cap_id += 1
+        cid, cancel = self.cap_id, threading.Event()
+        self.cancel, self.capturing = cancel, True
+        self.ui.status("聆聽中…", "listen")
+        print("聆聽中…")
+
+        def run():
             try:
-                heard = listener.listen()
+                text = self.listener.listen(cancel)
             except NetworkError as e:
-                print(f"[線上辨識失敗:{e}]")
+                if not cancel.is_set():
+                    self.ui.events.put(("neterr", cid, str(e)))
+                return
+            except Exception as e:
+                if not cancel.is_set():
+                    self.ui.events.put(("error", cid, str(e)))
+                return
+            if not cancel.is_set():
+                self.ui.events.put(("voice", cid, text))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def stop_capture(self):
+        if self.capturing and self.cancel:
+            self.cancel.set()
+        self.capturing = False
+
+    def ensure_capture(self):
+        if self.active and not self.capturing and not self.quit:
+            if wait_for_network(self.listener, self.speaker, self.ui):
+                self.say(["網路已恢復。"])
+            if self.active:
+                self.start_capture()
+
+    # ───── 畫面狀態 ─────
+    def sync_ui(self):
+        self.ui.set_button("停止" if self.active else "開始", on=self.active)
+        self.ui.set_mode(self.mode)
+
+    def idle(self, text=None, kind="idle"):
+        self.ui.status(text or ("按「開始」後說話" if self.mode == "tap" else "已停止"), kind)
+
+    # ───── 主迴圈 ─────
+    def run(self):
+        wait_for_network(self.listener, self.speaker, self.ui)
+        self.sync_ui()
+        self.ui.status("按「開始」後說話" if self.mode == "tap" else "尚未開始", "idle")
+        if self.ui.headless:  # 文字模式沒有按鈕:一開始就開始聽,終端機輸入的文字就是打字查詢
+            self.mode, self.active, self.greeted = "auto", True, True
+            print("文字模式:直接輸入項目名稱、編號或「查詢 關鍵字」;Ctrl+C 結束。")
+        while not self.quit:
+            self.ensure_capture()
+            self.dispatch(self.ui.events.get())
+
+    def dispatch(self, ev):
+        kind = ev[0]
+        if kind == "quit":
+            self.quit = True
+            self.stop_capture()
+        elif kind in ("mic", "mode"):
+            self.control(ev)
+        elif kind in ("voice", "neterr", "error"):
+            if ev[1] != self.cap_id or not self.capturing:
+                return  # 已經被取消或過期的結果
+            self.capturing = False
+            if kind == "voice":
+                self.on_voice(ev[2])
+            elif kind == "neterr":
+                print(f"[線上辨識失敗:{ev[2]}]")
                 forget_network()  # 重新檢查網路;確定斷線的話,下一圈會語音告知
-                if listener.is_online():
-                    ui.heard("辨識服務暫時連不上")
-                    say(["辨識服務暫時連不上,請再說一次。"])
-                    return ""
-                continue
-            if heard:
-                print(f"聽到:{heard}  ({getattr(listener, 'last_info', '')})")
-                ui.heard(f"聽到:{heard}")
-            return heard
+                if self.listener.is_online():
+                    self.ui.heard("辨識服務暫時連不上")
+                    self.say(["辨識服務暫時連不上,請再說一次。"])
+                    if self.mode == "tap":
+                        self.active = False
+                        self.sync_ui()
+                        self.idle()
+            else:
+                print(f"[錯誤:{ev[2]}]")
+                self.active = False
+                self.sync_ui()
+                self.idle("發生錯誤,請看終端機訊息", "error")
+        elif kind == "text":
+            self.stop_capture()
+            if self.mode == "tap":
+                self.active = False
+                self.sync_ui()
+            print(f"輸入:{ev[1]}")
+            self.ui.heard(f"輸入:{ev[1]}")
+            self.handle(ev[1])
+            if not self.active and not self.quit:
+                self.idle()
 
-    def read(proc):
-        ui.show(proc)
-        ui.highlight(0)
-        say(script(proc), on_start=ui.highlight)
-        ui.highlight(0)
+    def control(self, ev):
+        """「開始 / 停止」按鈕與模式切換。"""
+        if ev[0] == "mode":
+            self.stop_capture()
+            self.active = False
+            self.mode = ev[1]
+            self.settings.set(mode=self.mode)
+            self.ui.heard("")
+            self.sync_ui()
+            self.idle("尚未開始" if self.mode == "auto" else None)
+            return
+        if self.active:  # 停止
+            self.active = False
+            self.stop_capture()
+            self.sync_ui()
+            self.idle()
+            return
+        self.active = True
+        self.sync_ui()
+        if self.mode == "auto" and self.settings.intro and not self.greeted:
+            self.greeted = True  # 使用說明只在開啟程式後第一次念(設定裡可以關閉)
+            self.say([INTRO])
 
-    wait_for_network(listener, speaker, ui)
-    say(["系統已就緒。請說出測試項目名稱或編號。說「重複」可以重新朗讀,說「結束」離開。"])
-    last = None
-    while True:
-        heard = listen()
-        if not heard:
-            continue
+    def on_voice(self, text):
+        if self.mode == "tap":
+            self.active = False
+            self.sync_ui()
+        if not text:
+            if self.mode == "tap":
+                self.idle("沒聽到聲音,請按「開始」再試", "error")
+            return
+        print(f"聽到:{text}  ({getattr(self.listener, 'last_info', '')})")
+        self.ui.heard(f"聽到:{text}")
+        self.handle(text)
+        if not self.active and not self.quit:
+            self.idle()
 
-        ranked = pr.rank(heard, procs)
-        cmd = None if pr.is_confident(ranked) else pr.command(heard)
+    # ───── 處理一句話 ─────
+    def handle(self, heard):
+        ranked = pr.rank(heard, self.procs)
+        confident = pr.is_confident(ranked)
+        cmd = None if confident else pr.command(heard)
         if cmd == "quit":
-            say(["好的,再見。"])
-            ui.close()
+            self.say(["好的,再見。"])
+            self.quit = True
+            self.ui.close()
             return
         if cmd == "repeat":
-            if last:
-                read(last)
+            if self.last:
+                self.read(self.last)
             else:
-                say(["還沒有可以重複的內容,請先說出測試項目。"])
-            continue
+                self.say(["還沒有可以重複的內容,請先說出測試項目。"])
+            return
+        query = None if confident else pr.parse_query(heard)
+        if query:
+            return self.handle_query(*query)
 
         chosen = None
-        if pr.is_confident(ranked):
+        if confident:
             chosen = ranked[0][1]
-        else:  # 不太確定:逐一詢問最接近的幾個
-            for score, p in ranked:
-                ui.heard(f"聽到:{heard}  →  請問是 {p.id} {p.name} 嗎?")
-                say([f"請問是 {spoken_id(p.id)}。{p.name} 嗎?請回答是或不是。"])
-                for _ in range(2):
-                    answer = pr.yes_no(listen())
-                    if answer is not None:
+        else:  # 不太確定:逐一詢問最接近的幾個(畫面上有「是 / 不是」按鈕,也可以用說的)
+            try:
+                for _, proc in ranked:
+                    self.ui.show_confirm(f"請問是 {proc.id} {proc.name} 嗎?")
+                    self.say([f"請問是 {spoken_id(proc.id)}。{proc.name} 嗎?請回答是或不是。"])
+                    ans = self.wait_answer()
+                    if isinstance(ans, tuple):  # 沒回答是/不是,而是打了新的查詢
+                        self.ui.hide_confirm()
+                        return self.handle(ans[1])
+                    if ans is None:
+                        return
+                    if ans:
+                        chosen = proc
                         break
-                if answer:
-                    chosen = p
-                    break
+            finally:
+                self.ui.hide_confirm()
         if not chosen:
-            ui.heard(f"聽到:{heard}  (找不到對應的測試項目)")
-            say(["找不到對應的測試項目,請再說一次。"])
-            continue
+            self.ui.heard(f"聽到:{heard}  (找不到對應的測試項目)")
+            self.say(["找不到對應的測試項目,請再說一次。"])
+            return
+        self.last = chosen
+        self.read(chosen)
 
-        last = chosen
-        print(f"→ {chosen.id} {chosen.name}")
-        read(chosen)
+    def wait_answer(self):
+        """等「是 / 不是」:按畫面按鈕、打字,或(聆聽中)用說的。
+        回傳 True / False / ("text", 字串)(打了別的查詢)/ None(取消)。"""
+        misses = 0
+        while not self.quit:
+            self.ensure_capture()
+            ev = self.ui.events.get()
+            kind = ev[0]
+            if kind in ("yes", "no"):
+                self.stop_capture()
+                if self.mode == "tap":
+                    self.active = False
+                    self.sync_ui()
+                return kind == "yes"
+            if kind == "text":
+                self.stop_capture()
+                a = pr.yes_no(ev[1])
+                return a if a is not None else ("text", ev[1])
+            if kind in ("voice", "neterr", "error"):
+                if ev[1] != self.cap_id or not self.capturing:
+                    continue
+                self.capturing = False
+                if kind != "voice":
+                    continue
+                if self.mode == "tap":
+                    self.active = False
+                    self.sync_ui()
+                a = pr.yes_no(ev[2]) if ev[2] else None
+                if a is not None:
+                    return a
+                misses += 1
+                if misses >= 2:
+                    return None
+                continue
+            if kind == "mic" and self.mode == "tap" and not self.active:
+                self.active = True  # 點擊監聽:按「開始」→ 聽這次的回答
+                self.sync_ui()
+                continue
+            if kind == "quit":
+                self.quit = True
+                return None
+            if kind in ("mic", "mode"):
+                self.control(ev)
+                return None
+        return None
+
+    def handle_query(self, kind, keywords):
+        """語音查詢:把關鍵字放進輸入框、顯示清單,並簡短回應。"""
+        if kind == "close":
+            self.ui.clear_search()
+            self.ui.heard("已收起清單")
+            return
+        if kind == "all":
+            self.ui.set_list_all(True)
+            self.say([f"共 {len(self.procs)} 項,請看畫面。"])
+            return
+        if not keywords:
+            self.say(["請說要查詢的關鍵字,例如:查詢 電源。"])
+            return
+        self.ui.set_query(keywords)  # 讓你看到查的是什麼,也可以接著用打字修改
+        hits = pr.search(keywords, self.procs)
+        if not hits:
+            self.say([f"找不到含有「{keywords}」的項目,請換個說法。"])
+        elif len(hits) <= 3 and self.settings.read_hits:
+            names = ";".join(f"{spoken_id(p.id)}。{p.name}" for _, p in hits)
+            self.say([f"找到 {len(hits)} 項:{names}。請說編號或名稱。"])
+        else:
+            self.say([f"找到 {len(hits)} 項,請看畫面。"])
 
 
 def main():
@@ -148,8 +351,7 @@ def main():
     ap.add_argument("--in-device", help="麥克風裝置編號或名稱(可用 --devices 查看)")
     ap.add_argument("--out-device", help="播放裝置編號或名稱")
     ap.add_argument("--devices", action="store_true", help="列出音訊裝置後結束")
-    ap.add_argument("--no-gui", action="store_true", help="不開大字視窗,只用文字介面")
-    ap.add_argument("--text", action="store_true", help="用鍵盤輸入代替麥克風(測試用)")
+    ap.add_argument("--no-gui", action="store_true", help="不開大字視窗,只用文字介面(在終端機輸入文字查詢)")
     ap.add_argument("--list", action="store_true", help="列出對照表內容後結束")
     args = ap.parse_args()
 
@@ -161,21 +363,22 @@ def main():
         pick = lambda v: int(v) if v and v.isdigit() else v
         sd.default.device = (pick(args.in_device), pick(args.out_device))
 
-    excel = find_excel(args.excel)
-    procs = pr.load_procedures(excel)
+    procs = pr.load_procedures(find_excel(args.excel))
     if args.list:
         for p in procs:
             print(f"{p.id}\t{p.name}\t別名:{'、'.join(p.aliases) or '-'}\t{len(p.steps)} 步")
         return
 
+    settings = Settings()
     speaker = Speaker(args.tts, rate=args.rate)
-    listener = TextListener() if args.text else Listener(min_threshold=args.threshold)
-    ui = NullUI() if args.no_gui else WindowUI()
+    listener = Listener(min_threshold=args.threshold)
+    ui = (NullUI if args.no_gui else WindowUI)(procs, settings, speaker.stop)
+    voice = Voice(procs, listener, speaker, ui, settings)
     print(f"已載入 {len(procs)} 個測試項目。" + ("Ctrl+C 可隨時結束。" if args.no_gui else "關閉視窗即可結束。"))
 
     def worker():
         try:
-            run(procs, listener, speaker, ui, args.text)
+            voice.run()
         except Exception:
             traceback.print_exc()
             ui.status("發生錯誤,請看終端機訊息", "error")

@@ -12,3 +12,6 @@ __pycache__/
 *.pyc
 .claude/
 shot.png
+
+# 使用者設定
+settings.json

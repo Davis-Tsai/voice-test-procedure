@@ -99,6 +99,8 @@ class Speaker:
         self.mode = mode
         self.rate = rate
         self.offline_rate = offline_rate
+        self._stop = False   # stop() 被呼叫後,正在念的內容會盡快結束
+        self._out = None     # 目前正在播放的輸出串流
         self.voices = dict(self.EDGE_VOICES)
         if zh_voice:
             self.voices["zh"] = zh_voice
@@ -113,20 +115,34 @@ class Speaker:
                 items.append((lang, text, self.PAUSE_PARA if i == len(segs) - 1 else self.PAUSE_SEG, n))
         return items
 
+    def stop(self):
+        """中斷正在念的內容(可從別的執行緒呼叫)。"""
+        self._stop = True
+        out = self._out
+        if out is not None:
+            try:
+                out.abort()
+            except Exception:
+                pass
+
     def speak_offline(self, paragraphs):
         """直接用 Windows 內建語音念(不需要網路),用來告知「網路沒連線」。"""
+        self._stop = False
         self._speak_offline(self._items(paragraphs))
 
     def speak(self, paragraphs, on_start=None):
         """paragraphs: 字串清單,每個字串是一段(一段內可中英混合)。
         on_start(n): 每一段開始念的時候呼叫,n 是第幾段(從 0 起),可用來同步畫面。"""
         items = self._items(paragraphs)
+        self._stop = False
         done = 0
         if self.mode in ("auto", "online") and (self.mode == "online" or is_online(self.EDGE_HOST)):
             try:
                 self._speak_edge(items, on_start)
                 return
             except Exception as e:  # 網路中斷、服務逾時…
+                if self._stop:  # 是被 stop() 中斷的,不是真的失敗
+                    return
                 done = getattr(e, "played", 0)
                 print(f"[線上朗讀失敗,改用離線語音:{e}]")
                 if self.mode == "online":
@@ -166,18 +182,24 @@ class Speaker:
         try:
             # 整段用同一個輸出串流,片段之間才不會因為重開裝置而出現空隙
             with sd.OutputStream(samplerate=24000, channels=1, dtype="int16") as out:
+                self._out = out
                 for i, (task, (_, _, pause, para)) in enumerate(zip(tasks, items)):
+                    if self._stop:
+                        break
                     try:
                         audio = await task
                     except Exception as e:
                         e.played = i
                         raise
+                    if self._stop:
+                        break
                     if on_start and para != current:
                         current = para
                         on_start(para)
                     audio = np.concatenate([audio, np.zeros(int(24000 * pause), dtype=np.int16)])
                     await loop.run_in_executor(None, out.write, audio.reshape(-1, 1))
         finally:
+            self._out = None
             for t in tasks:
                 t.cancel()
 
@@ -199,6 +221,8 @@ class Speaker:
         chosen = self._pick_offline_voices(engine)
         current = None
         for lang, text, pause, para in items:
+            if self._stop:
+                break
             if on_start and para != current:
                 current = para
                 on_start(para)
@@ -253,17 +277,34 @@ class Listener:
         return is_online(cls.HOST)
 
     # --- 錄音:偵測到開始說話才錄,靜音約 0.9 秒就結束 ---
-    def _record(self):
+    def _record(self, cancel=None):
+        """cancel: threading.Event,被設定時立刻結束並回傳 None(用來讓畫面按鈕或打字查詢打斷收音)。"""
         q = queue.Queue()
+        def get():
+            while True:
+                if cancel is not None and cancel.is_set():
+                    raise InterruptedError
+                try:
+                    return q.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+
         with sd.InputStream(samplerate=RATE, channels=1, dtype="int16", blocksize=BLOCK,
                             callback=lambda indata, *_: q.put(indata[:, 0].copy())):
             rms = lambda b: float(np.sqrt(np.mean(b.astype(np.float32) ** 2)))
-            if self.noise is None:  # 第一次先量 0.5 秒環境音
-                self.noise = float(np.mean([rms(q.get()) for _ in range(16)]))
+            try:
+                if self.noise is None:  # 第一次先量 0.5 秒環境音
+                    self.noise = float(np.mean([rms(get()) for _ in range(16)]))
+                return self._record_loop(get, rms)
+            except InterruptedError:
+                return None
+
+    def _record_loop(self, get, rms):
+        if True:
             pre = collections.deque(maxlen=10)
             frames, speech, silence = [], 0, 0
             while True:
-                blk = q.get()
+                blk = get()
                 level = rms(blk)
                 thr = max(self.min_threshold, self.noise * 3)
                 if not frames:
@@ -282,9 +323,9 @@ class Listener:
                     break
         return np.concatenate(frames) if speech >= 8 else None
 
-    def listen(self):
-        """錄音並用線上服務辨識。聽不懂回傳空字串;連不上網路丟出 NetworkError。"""
-        pcm = self._record()
+    def listen(self, cancel=None):
+        """錄音並用線上服務辨識。聽不懂(或被 cancel 取消)回傳空字串;連不上網路丟出 NetworkError。"""
+        pcm = self._record(cancel)
         if pcm is None:
             return ""
         if self.on_recognizing:
@@ -314,5 +355,5 @@ class TextListener:
     def is_online():
         return True
 
-    def listen(self):
+    def listen(self, cancel=None):
         return input("> ").strip()

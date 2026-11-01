@@ -1,57 +1,201 @@
-"""大字顯示視窗(永遠置頂)。語音流程在背景執行緒跑,視窗只負責顯示。"""
+"""大字顯示視窗(永遠置頂)。語音流程在背景執行緒跑,視窗負責顯示並把使用者的操作放進 events 佇列。
+
+視窗送出的事件(都是 tuple,放在 ui.events):
+  ("mic",)           按了「開始 / 停止」
+  ("mode", "auto"|"tap")
+  ("text", 字串)      打字查詢,或點了清單裡的項目(字串是項目編號)
+  ("yes",) ("no",)    按了「是 / 不是」
+  ("quit",)          關閉視窗
+"""
 import queue
+import sys
+import threading
 import tkinter as tk
+
+import procedures as pr
 
 FONT = "Microsoft JhengHei UI"
 COLORS = {"listen": "#1a7f37", "think": "#b36b00", "speak": "#0b57d0", "error": "#c5221f", "idle": "#555555"}
-HINT = "說出項目名稱或編號  ·  「重複」重新朗讀  ·  「結束」離開"
+MODES = (("auto", "常開監聽"), ("tap", "點擊監聽"))
 
 
-class NullUI:
-    """不開視窗(--no-gui)時使用:所有顯示動作都不做事。"""
+def build_results(procs, query, list_all):
+    """依輸入內容(或「清單」按鈕)決定要列出哪些項目。回傳 (標題, [Procedure]) 或 None(不需要清單)。"""
+    q = query.strip()
+    if not q and not list_all:
+        return None
+    if not q:
+        return f"全部 {len(procs)} 項,點一下就朗讀", list(procs)
+    hits = [p for _, p in pr.search(q, procs)]
+    if hits:
+        return f"找到 {len(hits)} 項,點一下就朗讀", hits
+    near = [p for _, p in pr.rank(q, procs)]  # 沒有包含這些字的項目:列出聽起來相近的
+    return (f"沒有包含「{q}」的項目,以下是相近的" if near else f"找不到「{q}」"), near
+
+
+class _Base:
+    headless = False
+
+    def __init__(self, procs, settings, on_interrupt):
+        self.procs = procs
+        self.settings = settings
+        self.on_interrupt = on_interrupt
+        self.events = queue.Queue()
+
+    def emit(self, *event, interrupt=False):
+        if interrupt and self.on_interrupt:
+            self.on_interrupt()  # 先讓正在念的內容停下來
+        self.events.put(event)
+
+
+class NullUI(_Base):
+    """不開視窗(--no-gui):只用文字。在終端機輸入文字就等於打字查詢。"""
+    headless = True
+
+    def __init__(self, procs, settings, on_interrupt):
+        super().__init__(procs, settings, on_interrupt)
+        self._query = ""
+        self._list_all = False
+        threading.Thread(target=self._read_stdin, daemon=True).start()
+
+    def _read_stdin(self):
+        for line in sys.stdin:
+            line = line.strip()
+            if line:
+                self.emit("text", line, interrupt=True)
+
+    def _print_list(self):
+        res = build_results(self.procs, self._query, self._list_all)
+        if res:
+            header, hits = res
+            print(header)
+            for p in hits:
+                print(f"  {p.id}  {p.name}")
 
     def status(self, text, kind="idle"): pass
     def heard(self, text): pass
     def show(self, proc): pass
     def highlight(self, step): pass
+    def show_confirm(self, question): print(question)
+    def hide_confirm(self): pass
+    def set_button(self, text, on=False): pass
+    def set_mode(self, mode): pass
+    def set_query(self, text): self._query, self._list_all = text, False; self._print_list()
+    def set_list_all(self, flag): self._query, self._list_all = "", flag; flag and self._print_list()
+    def clear_search(self): self._query, self._list_all = "", False
+    def mainloop(self): pass
     def close(self): pass
 
 
-class WindowUI(NullUI):
-    def __init__(self):
-        self.q = queue.Queue()
-        self.steps_count = 0
+class WindowUI(_Base):
+    def __init__(self, procs, settings, on_interrupt):
+        super().__init__(procs, settings, on_interrupt)
+        self.q = queue.Queue()  # 背景執行緒要我做的事(tkinter 只能在主執行緒操作)
+        self.list_all = False
+        self.hits = []
+        self.mode = settings.mode
+
         root = self.root = tk.Tk()
         root.title("語音測試步驟")
         root.attributes("-topmost", True)  # 永遠在其他視窗上面
-        width, height = 760, 620
-        root.geometry(f"{width}x{height}+{max(0, root.winfo_screenwidth() - width - 20)}+40")
-        root.minsize(480, 360)
-        root.protocol("WM_DELETE_WINDOW", root.destroy)
+        width, height = 780, 780
+        root.geometry(f"{width}x{height}+{max(0, root.winfo_screenwidth() - width - 20)}+30")
+        root.minsize(520, 560)
+        root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        pad = {"padx": 16, "anchor": "w", "fill": "x"}
-        self.status_lbl = tk.Label(root, text="啟動中…", font=(FONT, 22, "bold"), fg=COLORS["idle"], anchor="w")
-        self.status_lbl.pack(pady=(12, 0), **pad)
+        # 底部(先排,才不會被中間的內容擠掉)
+        bottom = tk.Frame(root)
+        bottom.pack(side="bottom", fill="x", padx=16, pady=(4, 10))
+
+        self.intro_var = tk.BooleanVar(value=settings.intro)
+        self.hits_var = tk.BooleanVar(value=settings.read_hits)
+        opts = tk.Frame(bottom)
+        opts.pack(side="bottom", fill="x", pady=(6, 0))
+        tk.Checkbutton(opts, text="第一次按「開始」念使用說明", variable=self.intro_var, font=(FONT, 11),
+                       command=lambda: settings.set(intro=self.intro_var.get())).pack(side="left")
+        tk.Checkbutton(opts, text="查詢找到 1~3 項時念出來", variable=self.hits_var, font=(FONT, 11),
+                       command=lambda: settings.set(read_hits=self.hits_var.get())).pack(side="left", padx=12)
+
+        form = tk.Frame(bottom)
+        form.pack(side="bottom", fill="x", pady=(8, 0))
+        self.var = tk.StringVar()
+        self.var.trace_add("write", lambda *_: self._render())
+        self.entry = tk.Entry(form, textvariable=self.var, font=(FONT, 18))
+        self.entry.pack(side="left", fill="x", expand=True, ipady=6)
+        self.entry.bind("<Return>", lambda _e: self._submit())
+        self.list_btn = tk.Button(form, text="清單", font=(FONT, 14), command=self._toggle_all)
+        self.list_btn.pack(side="left", padx=(8, 0))
+        tk.Button(form, text="查詢", font=(FONT, 14), command=self._submit).pack(side="left", padx=(8, 0))
+
+        bar = tk.Frame(bottom)
+        bar.pack(side="bottom", fill="x", pady=(8, 0))
+        self.mic_btn = tk.Button(bar, text="開始", font=(FONT, 22, "bold"), fg="white", bg="#0b57d0",
+                                 activebackground="#0b57d0", activeforeground="white",
+                                 command=lambda: self.emit("mic", interrupt=True))
+        self.mic_btn.pack(side="left", fill="x", expand=True, ipady=8)
+        tk.Button(bar, text="停止朗讀", font=(FONT, 14), command=lambda: on_interrupt and on_interrupt()).pack(side="left", padx=(8, 0), ipady=8)
+
+        modes = tk.Frame(bottom)
+        modes.pack(side="bottom", fill="x")
+        self.mode_btns = {}
+        for m, label in MODES:
+            b = tk.Button(modes, text=label, font=(FONT, 13), relief="solid", bd=1,
+                          command=lambda m=m: self.emit("mode", m, interrupt=True))
+            b.pack(side="left", fill="x", expand=True)
+            self.mode_btns[m] = b
+        self._paint_modes()
+
+        self.confirm = tk.Frame(root, bg="#fff4e5", highlightbackground="#f5c26b", highlightthickness=1)
+        self.confirm_q = tk.Label(self.confirm, bg="#fff4e5", font=(FONT, 18, "bold"), anchor="w", justify="left")
+        self.confirm_q.pack(fill="x", padx=10, pady=(8, 4))
+        yn = tk.Frame(self.confirm, bg="#fff4e5")
+        yn.pack(fill="x", padx=10, pady=(0, 10))
+        tk.Button(yn, text="是", font=(FONT, 22, "bold"), fg="white", bg="#1a7f37", activebackground="#1a7f37",
+                  activeforeground="white", command=lambda: self.emit("yes", interrupt=True)).pack(side="left", fill="x", expand=True, ipady=6, padx=(0, 6))
+        tk.Button(yn, text="不是", font=(FONT, 22, "bold"), fg="#c5221f", command=lambda: self.emit("no", interrupt=True)).pack(
+            side="left", fill="x", expand=True, ipady=6, padx=(6, 0))
+
+        # 上方與中間
+        self.status_lbl = tk.Label(root, text="尚未開始", font=(FONT, 22, "bold"), fg=COLORS["idle"], anchor="w")
+        self.status_lbl.pack(fill="x", padx=16, pady=(12, 0))
         self.heard_lbl = tk.Label(root, text="", font=(FONT, 14), fg="#666666", anchor="w", justify="left")
-        self.heard_lbl.pack(**pad)
-        self.title_lbl = tk.Label(root, text="", font=(FONT, 34, "bold"), anchor="w", justify="left")
-        self.title_lbl.pack(pady=(8, 4), **pad)
-        tk.Label(root, text=HINT, font=(FONT, 11), fg="#888888", anchor="w").pack(side="bottom", pady=(0, 8), **pad)
+        self.heard_lbl.pack(fill="x", padx=16)
 
-        self.steps = tk.Text(root, font=(FONT, 24), wrap="word", relief="flat", state="disabled",
+        self.body = tk.Frame(root)
+        self.body.pack(fill="both", expand=True, padx=16, pady=(4, 0))
+        self.title_lbl = tk.Label(self.body, text="", font=(FONT, 32, "bold"), anchor="w", justify="left")
+        self.steps = tk.Text(self.body, font=(FONT, 24), wrap="word", relief="flat", state="disabled",
                              cursor="arrow", spacing1=6, spacing3=10, padx=8)
-        self.steps.pack(fill="both", expand=True, padx=16, pady=(0, 8))
         self.steps.tag_configure("cur", background="#ffe08a", font=(FONT, 24, "bold"))
+        self.steps_count = 0
 
+        self.results = tk.Frame(self.body)
+        self.res_head = tk.Label(self.results, text="", font=(FONT, 13), fg="#666666", anchor="w")
+        self.res_head.pack(fill="x")
+        rframe = tk.Frame(self.results)
+        rframe.pack(fill="both", expand=True)
+        sb = tk.Scrollbar(rframe)
+        sb.pack(side="right", fill="y")
+        self.lb = tk.Listbox(rframe, font=(FONT, 20), activestyle="none", yscrollcommand=sb.set, selectbackground="#ffe08a",
+                             selectforeground="black", relief="solid", bd=1)
+        self.lb.pack(side="left", fill="both", expand=True)
+        sb.config(command=self.lb.yview)
+        self.lb.bind("<ButtonRelease-1>", self._on_pick)
+
+        self.title_lbl.config(text="按下「開始」,然後說出測試項目名稱或編號")
+        self._show_body(results=False)
         root.bind("<Configure>", self._on_resize)
         root.after(50, self._poll)
 
-    # --- 以下方法可從任何執行緒呼叫,實際更新交給主執行緒 ---
+    # ───── 背景執行緒呼叫(實際更新交給主執行緒)─────
+    def _post(self, fn):
+        self.q.put(fn)
+
     def status(self, text, kind="idle"):
-        self.q.put(lambda: self.status_lbl.config(text=text, fg=COLORS.get(kind, COLORS["idle"])))
+        self._post(lambda: self.status_lbl.config(text=text, fg=COLORS.get(kind, COLORS["idle"])))
 
     def heard(self, text):
-        self.q.put(lambda: self.heard_lbl.config(text=text))
+        self._post(lambda: self.heard_lbl.config(text=text))
 
     def show(self, proc):
         def do():
@@ -61,7 +205,7 @@ class WindowUI(NullUI):
             self.steps.delete("1.0", "end")
             self.steps.insert("1.0", "\n".join(f"{i}. {s}" for i, s in enumerate(proc.steps, 1)))
             self.steps.config(state="disabled")
-        self.q.put(do)
+        self._post(do)
 
     def highlight(self, step):
         """step: 第幾步(從 1 起);不是步驟(開頭、結尾)就清掉標示。"""
@@ -70,15 +214,55 @@ class WindowUI(NullUI):
             if 1 <= step <= self.steps_count:
                 self.steps.tag_add("cur", f"{step}.0", f"{step}.end")
                 self.steps.see(f"{step}.0")
-        self.q.put(do)
+        self._post(do)
+
+    def show_confirm(self, question):
+        def do():
+            self.confirm_q.config(text=question)
+            self.confirm.pack(after=self.heard_lbl, fill="x", padx=16, pady=6)
+        self._post(do)
+
+    def hide_confirm(self):
+        self._post(self.confirm.pack_forget)
+
+    def set_button(self, text, on=False):
+        color = "#c5221f" if on else "#0b57d0"
+        self._post(lambda: self.mic_btn.config(text=text, bg=color, activebackground=color))
+
+    def set_mode(self, mode):
+        def do():
+            self.mode = mode
+            self._paint_modes()
+        self._post(do)
+
+    def set_query(self, text):
+        def do():
+            self.list_all = False
+            self.var.set(text)
+            self._render()
+        self._post(do)
+
+    def set_list_all(self, flag):
+        def do():
+            self.list_all = flag
+            self.var.set("")
+            self._render()
+        self._post(do)
+
+    def clear_search(self):
+        def do():
+            self.list_all = False
+            self.var.set("")
+            self._render()
+        self._post(do)
 
     def close(self):
-        self.q.put(self.root.destroy)
+        self._post(self.root.destroy)
 
     def mainloop(self):
         self.root.mainloop()
 
-    # --- 內部 ---
+    # ───── 主執行緒內部 ─────
     def _poll(self):
         try:
             while True:
@@ -87,8 +271,64 @@ class WindowUI(NullUI):
             pass
         self.root.after(50, self._poll)
 
+    def _on_close(self):
+        self.emit("quit", interrupt=True)
+        self.root.destroy()
+
     def _on_resize(self, event):
         if event.widget is self.root:
-            wrap = max(200, event.width - 32)
-            self.heard_lbl.config(wraplength=wrap)
-            self.title_lbl.config(wraplength=wrap)
+            wrap = max(240, event.width - 40)
+            for lbl in (self.heard_lbl, self.title_lbl, self.confirm_q):
+                lbl.config(wraplength=wrap)
+
+    def _paint_modes(self):
+        for m, b in self.mode_btns.items():
+            on = m == self.mode
+            b.config(bg="#1c1c1e" if on else "white", fg="white" if on else "black",
+                     activebackground="#1c1c1e" if on else "white", activeforeground="white" if on else "black")
+
+    def _show_body(self, results):
+        for w in (self.title_lbl, self.steps, self.results):
+            w.pack_forget()
+        if results:
+            self.results.pack(fill="both", expand=True)
+        else:
+            self.title_lbl.pack(fill="x")
+            self.steps.pack(fill="both", expand=True)
+
+    def _render(self):
+        res = build_results(self.procs, self.var.get(), self.list_all)
+        self.list_btn.config(bg="#1c1c1e" if self.list_all else "SystemButtonFace",
+                             fg="white" if self.list_all else "black")
+        if res is None:
+            self.hits = []
+            self._show_body(results=False)
+            return
+        header, self.hits = res
+        self.res_head.config(text=header)
+        self.lb.delete(0, "end")
+        for p in self.hits:
+            alias = f"    ({'、'.join(p.aliases)})" if p.aliases else ""
+            self.lb.insert("end", f" {p.id}   {p.name}{alias}")
+        self._show_body(results=True)
+
+    def _toggle_all(self):
+        self.list_all = not self.list_all
+        self._render()
+
+    def _submit(self):
+        text = self.var.get().strip()
+        self.list_all = False
+        self.var.set("")
+        self._render()
+        if text:
+            self.emit("text", text, interrupt=True)
+
+    def _on_pick(self, event):
+        i = self.lb.nearest(event.y)
+        if 0 <= i < len(self.hits):
+            proc = self.hits[i]
+            self.list_all = False
+            self.var.set("")
+            self._render()
+            self.emit("text", proc.id, interrupt=True)  # 用編號查詢,等同你說出完整編號

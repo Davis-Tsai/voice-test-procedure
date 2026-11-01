@@ -140,3 +140,56 @@ def yes_no(text):
     if "错" in q:
         return False
     return None
+
+
+# ───────────── 關鍵字搜尋與語音查詢指令(與網頁版 logic.js 一致)─────────────
+
+def search(query, procs):
+    """輸入幾個字(可用空白分成多個關鍵字),列出編號、名稱、別名含有這些字的所有項目。
+    每個關鍵字都要找得到;編號開頭 > 編號內含 > 名稱 > 別名,同分維持原本順序。回傳 [(分數, Procedure)]。"""
+    tokens = [t for t in (normalize(x) for x in str(query).split()) if t]
+    if not tokens:
+        return []
+    hits = []
+    for order, p in enumerate(procs):
+        name = normalize(p.name)
+        aliases = [normalize(a) for a in p.aliases]
+        score = 0
+        for t in tokens:
+            if p.id_key.startswith(t):
+                s = 4
+            elif t in p.id_key:
+                s = 3
+            elif t in name:
+                s = 2
+            elif any(t in a for a in aliases):
+                s = 1
+            else:
+                score = None
+                break
+            score += s
+        if score is not None:
+            hits.append((score, order, p))
+    hits.sort(key=lambda h: (-h[0], h[1]))
+    return [(score, p) for score, _, p in hits]
+
+
+_PUNCT = " \t,。.,!?!?、::"
+_QUERY_PREFIX = re.compile(r"^(?:查詢|查询|搜尋|搜寻|搜索|尋找|寻找|查找|列出|找|search|find|list)\s*(.*)$", re.I)
+
+
+def parse_query(text):
+    """語音「查詢」指令:句首是 查詢/搜尋/找/列出(或 search/find/list)才算,後面接關鍵字。
+    回傳 ("search", 關鍵字) / ("all", None) / ("close", None) / None。只認句首,所以「檢查電源」不會被誤判。"""
+    t = str(text).strip(_PUNCT)
+    if re.fullmatch(r"(?:關閉|关闭|收起|隱藏|隐藏)(?:項目)?(?:清單|清单|列表)?|(?:close|hide)(?:\s+list)?", t, re.I):
+        return ("close", None)
+    if re.fullmatch(r"全部|所有|全部項目|所有項目|全部项目|所有项目|項目清單|项目清单|項目列表|项目列表|清單|清单|列表", t):
+        return ("all", None)
+    m = _QUERY_PREFIX.match(t)
+    if not m:
+        return None
+    kw = m.group(1).strip(_PUNCT)
+    if re.fullmatch(r"(?:全部|所有)(?:項目|项目)?|all", kw, re.I):
+        return ("all", None)
+    return ("search", kw)
