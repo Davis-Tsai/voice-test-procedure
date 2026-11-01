@@ -38,7 +38,7 @@
 
 專案附的是**範例**資料 `procedures.sample.xlsx`(5 筆假資料),下載後不用設定就能直接試。
 
-要用自己的資料時:複製一份範例檔,改名成 **`procedures.xlsx`**,放在程式資料夾裡,內容換成你的項目。程式會優先使用 `procedures.xlsx`,找不到才用範例。也可以用 `--excel 檔案路徑` 指定任何位置的檔案。
+要用自己的資料時:複製一份範例檔,改名成 **`procedures.xlsx`**,放在**程式所在的資料夾**(`main.py` 旁邊;將來打包成 exe 時就是 exe 旁邊),內容換成你的項目。程式一律以這個資料夾為準,不管你從哪裡啟動。會優先使用 `procedures.xlsx`,找不到才用範例。也可以用 `--excel 檔案路徑` 指定任何位置的檔案。`settings.json` 也存在同一個資料夾。
 
 `procedures.xlsx` 已被 `.gitignore` 忽略,**只存在你自己的電腦上,不會被 commit**,所以內容不會外流到公開的 GitHub。請不要把含真實資料的 Excel 改名後放進專案。
 

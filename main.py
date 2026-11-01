@@ -32,18 +32,35 @@ def script(p):
     return paras
 
 
+def app_dir():
+    """程式所在的資料夾:將來打包成 exe 時是 exe 旁邊,否則是原始碼資料夾。
+    使用者自己的 procedures.xlsx 與 settings.json 都放這裡(不依賴「從哪個資料夾啟動」)。"""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def resource_dir():
+    """打包進程式裡的唯讀資料(例如範例檔)所在的資料夾;沒打包時就是原始碼資料夾。"""
+    return Path(getattr(sys, "_MEIPASS", app_dir()))
+
+
 def find_excel(path):
-    """--excel 指定的檔案優先;沒指定就用 procedures.xlsx,都沒有就用範例檔。"""
+    """--excel 指定的檔案優先;沒指定就用程式資料夾裡的 procedures.xlsx,都沒有就用範例檔。"""
     if path:
         if not Path(path).exists():
             sys.exit(f"找不到對照表:{path}")
         return path
-    if Path(DEFAULT_EXCEL).exists():
-        return DEFAULT_EXCEL
-    if Path(SAMPLE_EXCEL).exists():
-        print(f"[目前使用範例資料 {SAMPLE_EXCEL}。要用自己的資料,請建立 {DEFAULT_EXCEL}(欄位:編號、名稱、別名、步驟),或用 --excel 指定檔案]")
-        return SAMPLE_EXCEL
-    sys.exit(f"找不到對照表 {DEFAULT_EXCEL}。請建立它,或執行 python make_sample_excel.py 產生範例。")
+    own = app_dir() / DEFAULT_EXCEL
+    if own.exists():
+        return own
+    for folder in (app_dir(), resource_dir()):
+        sample = folder / SAMPLE_EXCEL
+        if sample.exists():
+            print(f"[目前使用範例資料。要用自己的資料,請在 {app_dir()} 建立 {DEFAULT_EXCEL}"
+                  "(欄位:編號、名稱、別名、步驟),或用 --excel 指定檔案]")
+            return sample
+    sys.exit(f"找不到對照表 {own}。請建立它,或執行 python make_sample_excel.py 產生範例。")
 
 
 def wait_for_network(listener, speaker, ui):
@@ -369,7 +386,7 @@ def main():
             print(f"{p.id}\t{p.name}\t別名:{'、'.join(p.aliases) or '-'}\t{len(p.steps)} 步")
         return
 
-    settings = Settings()
+    settings = Settings(app_dir() / "settings.json")
     speaker = Speaker(args.tts, rate=args.rate)
     listener = Listener(min_threshold=args.threshold)
     ui = (NullUI if args.no_gui else WindowUI)(procs, settings, speaker.stop)
