@@ -29,7 +29,8 @@ const state = {
   awaitingAnswer: false, // 正在問「請問是…嗎?」等是/不是
   mode: "auto",       // "auto" 常開監聽 | "ptt" 按住說話
   ptt: null,          // 按住說話進行中的 {rec, startedAt, ...}
-  prevEnded: null,    // 上一次辨識結束的 Promise
+  prevEnded: null,    // 最近一次辨識(不論哪種模式)結束的 Promise,新的辨識要等它
+  lastEndAt: 0,       // 最近一次辨識結束的時間
   rec: null,
   typedResolve: null, // 流程正在等輸入時,打字查詢送到這裡
   speakToken: 0,
@@ -151,6 +152,17 @@ function pickVoice(lang) {
   return null;
 }
 
+/** iPhone 只允許「使用者點擊的當下」開始第一段朗讀,事後(例如辨識完成後)才念會沒聲音。
+ *  所以在點擊當下先送一段無聲的朗讀,把朗讀功能解鎖。 */
+function unlockSpeech() {
+  if (!synth) return;
+  const u = new SpeechSynthesisUtterance("。");
+  u.volume = 0;
+  u.lang = "zh-TW";
+  synth.speak(u);
+  dbg("解鎖朗讀(點擊當下送出無聲朗讀)");
+}
+
 function utter(text, lang) {
   return new Promise((resolve) => {
     const u = new SpeechSynthesisUtterance(text);
@@ -158,10 +170,17 @@ function utter(text, lang) {
     if (v) { u.voice = v; u.lang = v.lang; } else u.lang = lang === "zh" ? "zh-TW" : "en-US";
     u.rate = state.rate;
     let done = false;
-    const fin = () => { if (!done) { done = true; clearTimeout(timer); resolve(); } };
+    let started = false;
+    const fin = () => { if (!done) { done = true; clearTimeout(timer); clearTimeout(warn); resolve(); } };
     const timer = setTimeout(fin, Math.max(4000, text.length * 500)); // 有些瀏覽器不會觸發 onend
+    const warn = setTimeout(() => {
+      if (started || done) return;
+      dbg(`朗讀 2.5 秒內沒有開始:${text.slice(0, 12)}`);
+      showNotice("手機沒有發出朗讀聲:請確認沒有開靜音(側邊撥片)、音量有開,然後點一下按鈕再試。");
+    }, 2500);
+    u.onstart = () => { started = true; };
     u.onend = fin;
-    u.onerror = fin;
+    u.onerror = (e) => { dbg(`朗讀 error:${e.error || ""}`); fin(); };
     state.finCurrent = fin;
     synth.speak(u);
   });
@@ -172,6 +191,10 @@ async function speak(paragraphs, onPara) {
   if (!synth) return;
   const token = ++state.speakToken;
   synth.cancel();
+  // 辨識剛結束時,iPhone 的聲音輸出還沒從「收音」切回「播放」,馬上念會沒聲音
+  const sinceEnd = Date.now() - state.lastEndAt;
+  if (isIOS && sinceEnd < 600) await sleep(600 - sinceEnd);
+  if (token !== state.speakToken) return;
   $("stopSpeakBtn").disabled = false;
   try {
     for (let n = 0; n < paragraphs.length; n++) {
@@ -234,6 +257,8 @@ function getInput() {
 
     const r = new SR();
     state.rec = r;
+    let markEnded;
+    const ended = new Promise((res) => { markEnded = res; });
     r.lang = "zh-TW";
     r.maxAlternatives = 3;
     r.interimResults = true; // 結束時若沒有「最終」結果(iPhone 常見),就用最後一個暫時結果
@@ -260,6 +285,8 @@ function getInput() {
     };
     r.onend = () => {
       const ms = Date.now() - t0;
+      state.lastEndAt = Date.now();
+      markEnded();
       dbg(`常開 end(${ms} 毫秒,${alts.length ? "有結果" : "沒結果"})`);
       if (error === "not-allowed" || error === "service-not-allowed") finish({ fatal: describeError(error) });
       else if (error === "audio-capture" && /muted/i.test(errorMessage)) finish({ transient: describeError(error, errorMessage), ms });
@@ -267,7 +294,19 @@ function getInput() {
       else if (error === "network") finish({ network: true });
       else finish({ text: alts[0] || "", alts, ms });
     };
-    try { r.start(); } catch (err) { dbg(`常開 start() 丟出例外:${err.name} ${err.message}`); finish({ needTap: true }); }
+    // 上一次辨識(不論哪種模式)還沒完全結束就開始新的,iPhone 會把新的一次直接靜音:先等它結束
+    const prev = state.prevEnded;
+    state.prevEnded = ended;
+    (async () => {
+      if (prev) await Promise.race([prev, sleep(1500)]);
+      if (isIOS) await sleep(300);
+      if (finished) { markEnded(); return; } // 等待期間已被取消或有打字輸入
+      try { r.start(); } catch (err) {
+        dbg(`常開 start() 丟出例外:${err.name} ${err.message}`);
+        markEnded();
+        finish({ needTap: true });
+      }
+    })();
   });
 }
 
@@ -473,6 +512,7 @@ async function pttStart() {
   };
   r.onend = () => {
     dbg(`辨識 end(${press.released ? "已放開" : "還沒放開就結束了"})`);
+    state.lastEndAt = Date.now();
     press.resolveEnded();
     pttFinished(press);
   };
@@ -485,6 +525,7 @@ async function pttStart() {
   const prev = state.prevEnded;
   state.prevEnded = press.ended;
   if (prev) await Promise.race([prev, sleep(1500)]);
+  if (isIOS) await sleep(300);
   if (state.ptt !== press) return; // 等待期間已被取消(切換模式等)
   if (press.released && !press.tapMode) { // 等待期間已經放開(而且不是點一下):不用再開始
     state.ptt = null;
@@ -530,7 +571,7 @@ function describeError(code, message = "") {
       return "沒有麥克風或語音辨識權限。iPhone 請到 設定 > 一般 > 鍵盤 開啟「聽寫」,並在 Safari 允許使用麥克風。";
     case "audio-capture":
       return /muted/i.test(message)
-        ? "麥克風被靜音或被其他功能佔用(例如 Siri、通話、聽寫)。請先關閉那些功能,等幾秒再按一次。"
+        ? "麥克風被靜音或被其他功能佔用(例如 Siri、通話、聽寫、另一個正在錄音的網頁)。請先關閉那些功能,等幾秒再試;還是不行就重新整理網頁(或關掉分頁重開)。"
         : "找不到麥克風。";
     case "network": return "辨識服務連不上,請檢查網路後再試。";
     case "no-speech": return "沒有聽到說話聲,請靠近麥克風再試一次。";
@@ -577,7 +618,15 @@ async function keepAwake() {
 // ───────────── 事件 ─────────────
 
 $("micBtn").addEventListener("click", () => {
-  if (state.mode === "ptt") return; // 按住說話模式用下面的 pointer 事件
+  if (state.mode === "ptt") {
+    // iPhone:點一下開始、再點一下結束。click 才會被當成「使用者操作」,朗讀與收音都需要這個
+    if (isIOS) {
+      dbg(state.ptt ? "click(結束)" : "click(開始)");
+      if (!state.ptt) unlockSpeech();
+      pttStart();
+    }
+    return; // 其他裝置用下面的 pointer 事件(按住說話)
+  }
   if (state.active) stopSession();
   else session();
 });
@@ -586,14 +635,14 @@ $("stopSpeakBtn").addEventListener("click", stopSpeaking);
 // 按住說話:按下開始、放開結束(用 pointer capture,手指滑出按鈕也會收到放開事件)
 const mic = $("micBtn");
 mic.addEventListener("pointerdown", (e) => {
-  if (state.mode !== "ptt") return;
+  if (state.mode !== "ptt" || isIOS) return;
   e.preventDefault();
   dbg(`pointerdown(${e.pointerType})`);
   try { mic.setPointerCapture(e.pointerId); } catch { /* 不支援就算了 */ }
   pttStart();
 });
 ["pointerup", "pointercancel"].forEach((t) => mic.addEventListener(t, () => {
-  if (state.mode !== "ptt") return;
+  if (state.mode !== "ptt" || isIOS) return;
   dbg(t);
   pttEnd();
 }));
@@ -618,6 +667,7 @@ $("typedForm").addEventListener("submit", (e) => {
 
 // 聆聽模式切換:常開監聽 / 按住說話
 function setMode(mode, { save = true } = {}) {
+  if (save) unlockSpeech(); // 使用者點了切換鈕:這是解鎖朗讀的好時機
   if (state.active) stopSession();
   if (state.ptt) {
     try { state.ptt.rec.abort(); } catch { /* 已結束 */ }
