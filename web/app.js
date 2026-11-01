@@ -29,6 +29,7 @@ const state = {
   awaitingAnswer: false, // 正在問「請問是…嗎?」等是/不是
   mode: "auto",       // "auto" 常開監聽 | "ptt" 按住說話
   ptt: null,          // 按住說話進行中的 {rec, startedAt, ...}
+  prevEnded: null,    // 上一次辨識結束的 Promise
   rec: null,
   typedResolve: null, // 流程正在等輸入時,打字查詢送到這裡
   speakToken: 0,
@@ -387,8 +388,20 @@ async function submit(alts) {
 
 const MIN_HOLD_MS = 350;
 
-function pttStart() {
-  if (state.mode !== "ptt" || state.ptt) return;
+// iPhone 的 Safari 用 continuous 模式容易失敗(被靜音、沒偵測到說話),改成「停頓就自動結束」;
+// 所以 iPhone 上除了按住說話,點一下也可以(說完停頓即自動結束,再點一次可以提早結束)。
+const autoEnd = () => isIOS;
+
+async function pttStart() {
+  if (state.mode !== "ptt") return;
+  if (state.ptt) { // 點一下模式進行中,再按一次 = 說完了
+    if (state.ptt.tapMode) {
+      dbg("再按一次,提早結束收音");
+      setStatus("辨識中…", "think");
+      try { state.ptt.rec.stop(); } catch { /* 已結束 */ }
+    }
+    return;
+  }
   showNotice("");
   if (!SR) { showNotice("這個瀏覽器不支援語音辨識,請用下方輸入框打字。"); return; }
   if (!navigator.onLine) {
@@ -402,12 +415,15 @@ function pttStart() {
   r.lang = "zh-TW";
   r.maxAlternatives = 3;
   r.interimResults = true; // 放開時若還沒有「最終」結果(iPhone 常見),就用最後一個暫時結果
-  r.continuous = true; // 按住期間即使停頓也持續收音,放開才結束
-  const press = { rec: r, startedAt: Date.now(), error: null, tooShort: false, released: false, results: [] };
+  r.continuous = !autoEnd(); // 其他裝置:按住期間即使停頓也持續收音,放開才結束
+  const press = { rec: r, startedAt: Date.now(), error: null, errorMessage: "", tooShort: false, released: false, tapMode: false, results: [] };
+  press.ended = new Promise((resolve) => { press.resolveEnded = resolve; });
   r.onstart = () => dbg("辨識 start");
   r.onaudiostart = () => {
     dbg("辨識 audiostart(麥克風開始收音)");
-    if (state.ptt === press && !press.released) setStatus("請說話…(說完放開)", "listen"); // 等麥克風真的開了再開口,前面的字才不會被吃掉
+    if (state.ptt !== press) return;
+    if (press.tapMode) setStatus("請說話…(說完停頓即可)", "listen");
+    else if (!press.released) setStatus("請說話…(說完放開)", "listen"); // 等麥克風真的開了再開口,前面的字才不會被吃掉
   };
   r.onspeechstart = () => dbg("辨識 speechstart(偵測到說話)");
   r.onnomatch = () => dbg("辨識 nomatch");
@@ -420,21 +436,47 @@ function pttStart() {
     press.errorMessage = e.message || "";
     dbg(`辨識 error:${e.error}${e.message ? `(${e.message})` : ""}`);
   };
-  r.onend = () => { dbg(`辨識 end(${press.released ? "已放開" : "還沒放開就結束了"})`); pttFinished(press); };
+  r.onend = () => {
+    dbg(`辨識 end(${press.released ? "已放開" : "還沒放開就結束了"})`);
+    press.resolveEnded();
+    pttFinished(press);
+  };
   state.ptt = press;
-  dbg(`pttStart(continuous=${r.continuous})`);
-  try { r.start(); } catch (err) { dbg(`start() 丟出例外:${err.name} ${err.message}`); state.ptt = null; showNotice("無法開始收音,請再按一次。"); return; }
   $("micBtn").classList.add("on");
   setStatus("準備中…", "think");
+  dbg(`pttStart(continuous=${r.continuous})`);
+  // 連續啟動太快,iPhone 會把新的一次直接靜音:先等上一次完全結束
+  const prev = state.prevEnded;
+  state.prevEnded = press.ended;
+  if (prev) await Promise.race([prev, sleep(1500)]);
+  if (state.ptt !== press) return; // 等待期間已被取消(切換模式等)
+  if (press.released && !press.tapMode) { // 等待期間已經放開(而且不是點一下):不用再開始
+    state.ptt = null;
+    press.resolveEnded();
+    return;
+  }
+  try { r.start(); } catch (err) {
+    dbg(`start() 丟出例外:${err.name} ${err.message}`);
+    state.ptt = null;
+    $("micBtn").classList.remove("on");
+    showNotice("無法開始收音,請再按一次。");
+  }
 }
 
 function pttEnd() {
   const press = state.ptt;
-  if (!press) return;
-  $("micBtn").classList.remove("on");
+  if (!press || press.released) return;
   press.released = true;
-  dbg(`放開(按住 ${Date.now() - press.startedAt} 毫秒)`);
-  if (Date.now() - press.startedAt < MIN_HOLD_MS) {
+  $("micBtn").classList.remove("on");
+  const held = Date.now() - press.startedAt;
+  dbg(`放開(按住 ${held} 毫秒)`);
+  if (held < MIN_HOLD_MS) {
+    if (autoEnd()) { // 點一下:改成「點一下說話」,說完停頓就會自動結束
+      press.tapMode = true;
+      $("micBtn").classList.add("on");
+      setStatus("請說話…(說完停頓即可)", "listen");
+      return;
+    }
     press.tooShort = true;
     try { press.rec.abort(); } catch { /* 已結束 */ }
     setStatus("按太短了,請按住說話", "error");
@@ -444,12 +486,15 @@ function pttEnd() {
   try { press.rec.stop(); } catch { /* 已結束 */ }
 }
 
-function describeError(code) {
+function describeError(code, message = "") {
   switch (code) {
     case "not-allowed":
     case "service-not-allowed":
       return "沒有麥克風或語音辨識權限。iPhone 請到 設定 > 一般 > 鍵盤 開啟「聽寫」,並在 Safari 允許使用麥克風。";
-    case "audio-capture": return "找不到麥克風。";
+    case "audio-capture":
+      return /muted/i.test(message)
+        ? "麥克風被靜音或被其他功能佔用(例如 Siri、通話、聽寫)。請先關閉那些功能,等幾秒再按一次。"
+        : "找不到麥克風。";
     case "network": return "辨識服務連不上,請檢查網路後再試。";
     case "no-speech": return "沒有聽到說話聲,請靠近麥克風再試一次。";
     case "language-not-supported": return "這個瀏覽器不支援中文語音辨識。";
@@ -462,7 +507,7 @@ function pttFinished(press) {
   $("micBtn").classList.remove("on");
   if (press.tooShort) return;
   if (press.error && press.error !== "aborted") {
-    showNotice(describeError(press.error));
+    showNotice(describeError(press.error, press.errorMessage));
     return idleStatus();
   }
   const alts = collectAlts(press.results);
