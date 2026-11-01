@@ -1,0 +1,228 @@
+// 純邏輯(不碰畫面與語音):Excel 欄位解析、語音文字比對、朗讀內容切分。
+// 對應桌面版的 procedures.py 與 speech_io.py 裡的 segment()。
+
+export const ACCEPT = 85;   // 達到此分數且明顯領先時,直接朗讀
+export const SUGGEST = 60;  // 達到此分數但不夠確定時,先問「是不是這個?」
+export const MARGIN = 5;    // 第一名要領先第二名多少分才算「明顯領先」
+
+const CN_DIGITS = { 零: "0", 〇: "0", 一: "1", 二: "2", 兩: "2", 两: "2", 三: "3", 四: "4", 五: "5", 六: "6", 七: "7", 八: "8", 九: "9" };
+
+/** 統一成可比對的形式:全形半形、大小寫、中文數字,去掉空白與標點。 */
+export function normalize(text) {
+  const t = String(text).normalize("NFKC").toLowerCase().replace(/[零〇一二兩两三四五六七八九]/g, (c) => CN_DIGITS[c]);
+  return t.replace(/[^0-9a-z一-鿿]/g, "");
+}
+
+// ───────────── Excel 欄位解析 ─────────────
+
+const HEADERS = {
+  id: ["編號", "項目編號", "项目编号", "编号", "id", "no", "no."],
+  name: ["名稱", "項目名稱", "项目名称", "名称", "name"],
+  aliases: ["別名", "别名", "alias", "aliases"],
+  steps: ["步驟", "步骤", "steps", "step"],
+};
+const STEP_PREFIX = /^\s*(?:第?\s*\d+\s*[步.、)）:：]|[①-⑳])\s*/;
+
+/** rows: 二維陣列,第一列是欄位名稱。回傳 [{id,name,aliases,steps,idKey,nameKeys}] */
+export function parseRows(rows) {
+  if (!rows || !rows.length) throw new Error("檔案是空的");
+  const cell = (v) => (v === null || v === undefined ? "" : String(v).trim());
+  const col = {};
+  rows[0].forEach((h, i) => {
+    const head = cell(h).toLowerCase();
+    for (const [key, names] of Object.entries(HEADERS)) if (names.includes(head)) col[key] = i;
+  });
+  const missing = ["id", "name", "steps"].filter((k) => !(k in col));
+  if (missing.length) throw new Error(`第一列缺少欄位:${missing.join("、")}。需要「編號、名稱、別名(選填)、步驟」`);
+
+  const procs = [];
+  for (const row of rows.slice(1)) {
+    const get = (k) => (k in col ? cell(row[col[k]]) : "");
+    const id = get("id");
+    const name = get("name");
+    if (!id && !name) continue;
+    const aliases = get("aliases").split(/[;；,，、|\n]/).map((a) => a.trim()).filter(Boolean);
+    const steps = get("steps").split(/\r?\n/).map((s) => s.replace(STEP_PREFIX, "").trim()).filter(Boolean);
+    procs.push({
+      id, name, aliases, steps,
+      idKey: normalize(id),
+      nameKeys: [name, ...aliases].map(normalize).filter(Boolean),
+    });
+  }
+  return procs;
+}
+
+/** 從存檔的 JSON 還原(只存 id/name/aliases/steps,比對用的欄位重算)。 */
+export function hydrate(list) {
+  return list.map((p) => ({
+    ...p,
+    idKey: normalize(p.id),
+    nameKeys: [p.name, ...(p.aliases || [])].map(normalize).filter(Boolean),
+  }));
+}
+
+// ───────────── 模糊比對(等同 rapidfuzz 的 ratio / partial_ratio)─────────────
+
+function lcsLength(a, b) {
+  if (!a.length || !b.length) return 0;
+  let prev = new Array(b.length + 1).fill(0);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = new Array(b.length + 1).fill(0);
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]);
+    }
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+export function ratio(a, b) {
+  const total = a.length + b.length;
+  return total ? (200 * lcsLength(a, b)) / total : 0;
+}
+
+export function partialRatio(a, b) {
+  const [s, l] = a.length <= b.length ? [a, b] : [b, a];
+  if (!s.length) return 0;
+  let best = 0;
+  for (let i = 0; i + s.length <= l.length; i++) best = Math.max(best, ratio(s, l.slice(i, i + s.length)));
+  // 頭尾不足整段長度的視窗也要比(例如較長字串的結尾剛好是較短字串的開頭)
+  for (let k = 1; k < s.length && k < l.length; k++) {
+    best = Math.max(best, ratio(s, l.slice(0, k)), ratio(s, l.slice(l.length - k)));
+  }
+  return best;
+}
+
+function escapeRe(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function score(query, p) {
+  let best = 0;
+  if (p.idKey) {
+    if (query === p.idKey) return 100;
+    // 句子裡含有編號,但前面不能是英數字、後面不能緊接數字(避免 tc1 吃掉 tc10)
+    const m = new RegExp(`(^|[^0-9a-z])${escapeRe(p.idKey)}(?![0-9])`).test(query);
+    if (m) return 98;
+    if (p.idKey.length >= 4) {
+      const r = ratio(query, p.idKey);
+      best = r >= 75 ? Math.min(80, r) : 0;
+    }
+  }
+  for (const key of p.nameKeys) {
+    if (query === key) return 100;
+    let s;
+    if (key.length >= 2 && query.includes(key)) s = 96;
+    else if (query.length >= 2 && key.includes(query)) s = 88;
+    else {
+      const partial = Math.min(query.length, key.length) >= 3 ? 0.95 * partialRatio(query, key) : 0;
+      s = Math.min(94, Math.max(ratio(query, key), partial));
+    }
+    best = Math.max(best, s);
+  }
+  return best;
+}
+
+/** 回傳 [{score, proc}],由高到低,只保留達到建議門檻的前幾名。 */
+export function rank(text, procs, limit = 3) {
+  const q = normalize(text);
+  if (!q) return [];
+  return procs
+    .map((proc) => ({ score: score(q, proc), proc }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .filter((r) => r.score >= SUGGEST);
+}
+
+export function isConfident(ranked) {
+  if (!ranked.length || ranked[0].score < ACCEPT) return false;
+  return ranked.length === 1 || ranked[0].score - ranked[1].score >= MARGIN;
+}
+
+const REPEAT = ["重複", "重复", "重來", "重来", "再一次", "再說一次", "再说一次", "再念一次", "再唸一次", "repeat", "again"].map(normalize);
+const QUIT = ["結束", "结束", "離開", "离开", "退出", "quit", "exit"].map(normalize);
+
+export function command(text) {
+  const q = normalize(text);
+  if (REPEAT.some((w) => q.includes(w))) return "repeat";
+  if (QUIT.some((w) => q.includes(w))) return "quit";
+  return null;
+}
+
+/** true / false / null(聽不出來) */
+export function yesNo(text) {
+  const q = normalize(text);
+  if (["no", "nope", "nah"].includes(q) || /不|否|沒有|没有/.test(q)) return false;
+  if (["yes", "yeah", "yep", "ok", "okay", "sure"].includes(q) || /沒錯|没错|對|对|是|好|要|確定|确定|嗯/.test(q)) return true;
+  if (/錯|错/.test(q)) return false;
+  return null;
+}
+
+// ───────────── 朗讀內容 ─────────────
+
+/** TC-023 → "T C 0 2 3",讓編號一個字一個字念清楚。 */
+export function spokenId(pid) {
+  return pid.replace(/-/g, " ").replace(/[A-Za-z0-9]/g, (c) => c + " ").replace(/ +/g, " ").trim();
+}
+
+/** 每個元素是一段。第 0 段是編號與名稱,第 1~N 段是各步驟(段號就是步驟號),最後一段是結尾。 */
+export function script(p) {
+  return [
+    `${spokenId(p.id)}。${p.name}。共 ${p.steps.length} 個步驟。`,
+    ...p.steps.map((s, i) => `第 ${i + 1} 步。${s}`),
+    "以上。",
+  ];
+}
+
+const EN_RUN = /[A-Za-z][A-Za-z0-9'_/-]*(?:\.[A-Za-z0-9]+)*(?: +[A-Za-z0-9][A-Za-z0-9'_/-]*(?:\.[A-Za-z0-9]+)*)*/g;
+
+// 數字後面的單位用中文念(1 kHz → 1千赫茲),英文語音會把 kHz 念成一個個字母
+const UNITS = {
+  kHz: "千赫茲", MHz: "兆赫茲", GHz: "吉赫茲", Hz: "赫茲",
+  mV: "毫伏特", V: "伏特", mA: "毫安培", A: "安培", W: "瓦特",
+  dB: "分貝", "Ω": "歐姆", ms: "毫秒",
+};
+const UNIT_RE = new RegExp(
+  `(\\d+(?:\\.\\d+)?)\\s*(${Object.keys(UNITS).sort((a, b) => b.length - a.length).map(escapeRe).join("|")})(?![A-Za-z])`,
+  "g"
+);
+const DECIMAL = /\d+(?:\.\d+)+/g;
+const isAlnumOrDot = (c) => c !== undefined && /[A-Za-z0-9.]/.test(c);
+const isLetter = (c) => c !== undefined && /[A-Za-z]/.test(c);
+
+function splitWords(text) {
+  const out = [];
+  let pos = 0;
+  for (const m of text.matchAll(EN_RUN)) {
+    out.push({ lang: "zh", text: text.slice(pos, m.index) });
+    out.push({ lang: "en", text: m[0] });
+    pos = m.index + m[0].length;
+  }
+  out.push({ lang: "zh", text: text.slice(pos) });
+  return out;
+}
+
+/** 切成 [{lang, text}]:英文走英文語音,其餘(中文與數字)走中文語音;小數與 IP 用中文念成「點」。 */
+export function segment(input) {
+  const text = input.replace(UNIT_RE, (m, num, unit, offset, whole) =>
+    isLetter(whole[offset - 1]) ? m : num + UNITS[unit]
+  );
+  const parts = [];
+  let pos = 0;
+  for (const m of text.matchAll(DECIMAL)) {
+    if (isAlnumOrDot(text[m.index - 1])) continue;
+    parts.push(...splitWords(text.slice(pos, m.index)));
+    parts.push({ lang: "zh", text: m[0].replace(/\./g, "點") });
+    pos = m.index + m[0].length;
+  }
+  parts.push(...splitWords(text.slice(pos)));
+
+  const merged = []; // 相鄰的同語言片段合併,念起來才連貫
+  for (const { lang, text: t } of parts) {
+    if (!/[\p{L}\p{N}]/u.test(t)) continue;
+    const last = merged[merged.length - 1];
+    if (last && last.lang === lang) last.text += (lang === "en" ? " " : "") + t.trim();
+    else merged.push({ lang, text: t.trim() });
+  }
+  return merged;
+}

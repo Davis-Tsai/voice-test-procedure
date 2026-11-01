@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>語音查詢測試步驟</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div id="status" class="idle">尚未開始</div>
+    <div id="heard"></div>
+    <div id="notice" hidden></div>
+  </header>
+
+  <main>
+    <h1 id="title">按下「開始」,然後說出測試項目名稱或編號</h1>
+    <ol id="steps"></ol>
+  </main>
+
+  <footer>
+    <div class="bar">
+      <button id="micBtn" class="primary">開始</button>
+      <button id="stopSpeakBtn" disabled>停止朗讀</button>
+    </div>
+
+    <form id="typedForm" autocomplete="off">
+      <input id="typed" type="text" placeholder="也可以打字查詢(名稱或編號)" enterkeyhint="search">
+      <button type="submit">查詢</button>
+    </form>
+
+    <details>
+      <summary>資料與設定</summary>
+      <div class="settings">
+        <div id="source"></div>
+        <div class="row">
+          <label class="fileBtn">載入 Excel / CSV<input id="file" type="file" accept=".xlsx,.xls,.csv" hidden></label>
+          <button id="sampleBtn">改用範例資料</button>
+          <button id="clearBtn">清除已載入的資料</button>
+        </div>
+        <div class="row">
+          <label>朗讀速度
+            <select id="rate">
+              <option value="0.85">慢</option>
+              <option value="1" selected>正常</option>
+              <option value="1.2">快</option>
+            </select>
+          </label>
+        </div>
+        <p class="hint">
+          Excel 欄位:<b>編號、名稱、別名(選填)、步驟</b>(步驟同一格內一行一步)。<br>
+          Excel 只在這台裝置的瀏覽器裡處理並存在本機,不會上傳到任何伺服器。<br>
+          語音辨識由瀏覽器的語音服務處理(Chrome/Edge 為 Google、Safari 為 Apple),需要網路。
+        </p>
+      </div>
+    </details>
+  </footer>
+
+  <script src="vendor/xlsx.full.min.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

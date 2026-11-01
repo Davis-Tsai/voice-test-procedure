@@ -1,0 +1,13 @@
+# 真正的測試項目對照表(可能是機密)絕對不要上傳:所有 Excel 檔都忽略,只放行範例檔
+*.xlsx
+*.xls
+~$*
+!web/sample.xlsx
+!procedures.sample.xlsx
+
+# 環境與暫存
+.venv/
+__pycache__/
+*.pyc
+.claude/
+shot.png

@@ -1,0 +1,9 @@
+numpy
+sounddevice
+openpyxl
+rapidfuzz
+zhconv
+SpeechRecognition
+edge-tts
+miniaudio
+pyttsx3
