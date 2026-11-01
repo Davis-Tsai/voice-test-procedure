@@ -4,6 +4,16 @@ import * as L from "./logic.js";
 const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// 診斷紀錄:顯示在「資料與設定 → 診斷紀錄」,手機上沒有開發者工具時用來查問題
+const T0 = Date.now();
+const dbgLines = [];
+function dbg(msg) {
+  dbgLines.push(`${((Date.now() - T0) / 1000).toFixed(1)}s ${msg}`);
+  if (dbgLines.length > 60) dbgLines.shift();
+  const el = document.getElementById("debug");
+  if (el) el.textContent = dbgLines.join("\n");
+}
+
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const synth = window.speechSynthesis;
 const KEY = { procs: "vtp.procs.v1", source: "vtp.source.v1", rate: "vtp.rate.v1", mode: "vtp.mode.v1" };
@@ -393,12 +403,23 @@ function pttStart() {
   r.maxAlternatives = 3;
   r.interimResults = false;
   r.continuous = true; // 按住期間即使停頓也持續收音,放開才結束
-  const press = { rec: r, startedAt: Date.now(), error: null, tooShort: false, results: [] };
-  r.onresult = (e) => { press.results = [...e.results]; };
-  r.onerror = (e) => { press.error = e.error; };
-  r.onend = () => pttFinished(press);
+  const press = { rec: r, startedAt: Date.now(), error: null, tooShort: false, released: false, results: [] };
+  r.onstart = () => dbg("辨識 start");
+  r.onaudiostart = () => dbg("辨識 audiostart(麥克風開始收音)");
+  r.onspeechstart = () => dbg("辨識 speechstart(偵測到說話)");
+  r.onnomatch = () => dbg("辨識 nomatch");
+  r.onresult = (e) => {
+    press.results = [...e.results];
+    dbg(`辨識 result:${[...e.results].map((x) => x[0].transcript).join(" | ")}`);
+  };
+  r.onerror = (e) => {
+    press.error = e.error;
+    dbg(`辨識 error:${e.error}${e.message ? `(${e.message})` : ""}`);
+  };
+  r.onend = () => { dbg(`辨識 end(${press.released ? "已放開" : "還沒放開就結束了"})`); pttFinished(press); };
   state.ptt = press;
-  try { r.start(); } catch { state.ptt = null; showNotice("無法開始收音,請再按一次。"); return; }
+  dbg(`pttStart(continuous=${r.continuous})`);
+  try { r.start(); } catch (err) { dbg(`start() 丟出例外:${err.name} ${err.message}`); state.ptt = null; showNotice("無法開始收音,請再按一次。"); return; }
   $("micBtn").classList.add("on");
   setStatus("聆聽中…(說完放開)", "listen");
 }
@@ -407,6 +428,8 @@ function pttEnd() {
   const press = state.ptt;
   if (!press) return;
   $("micBtn").classList.remove("on");
+  press.released = true;
+  dbg(`放開(按住 ${Date.now() - press.startedAt} 毫秒)`);
   if (Date.now() - press.startedAt < MIN_HOLD_MS) {
     press.tooShort = true;
     try { press.rec.abort(); } catch { /* 已結束 */ }
@@ -417,18 +440,33 @@ function pttEnd() {
   try { press.rec.stop(); } catch { /* 已結束 */ }
 }
 
+function describeError(code) {
+  switch (code) {
+    case "not-allowed":
+    case "service-not-allowed":
+      return "沒有麥克風或語音辨識權限。iPhone 請到 設定 > 一般 > 鍵盤 開啟「聽寫」,並在 Safari 允許使用麥克風。";
+    case "audio-capture": return "找不到麥克風。";
+    case "network": return "辨識服務連不上,請檢查網路後再試。";
+    case "no-speech": return "沒有聽到說話聲,請靠近麥克風再試一次。";
+    case "language-not-supported": return "這個瀏覽器不支援中文語音辨識。";
+    default: return `辨識出錯(${code})。`;
+  }
+}
+
 function pttFinished(press) {
   if (state.ptt === press) state.ptt = null;
   $("micBtn").classList.remove("on");
   if (press.tooShort) return;
-  if (press.error === "not-allowed" || press.error === "service-not-allowed") {
-    showNotice("沒有麥克風權限。請在瀏覽器設定允許使用麥克風,或改用下方輸入框打字。");
+  if (press.error && press.error !== "aborted") {
+    showNotice(describeError(press.error));
     return idleStatus();
   }
-  if (press.error === "audio-capture") { showNotice("找不到麥克風。"); return idleStatus(); }
-  if (press.error === "network") { showNotice("辨識服務連不上,請檢查網路後再試。"); return idleStatus(); }
   const alts = collectAlts(press.results);
-  if (!alts.length) { setStatus("沒聽到聲音,請再按住說話", "error"); return; }
+  if (!alts.length) {
+    showNotice(press.released ? "沒有收到辨識結果,請再按住說話。" : "收音自己提早結束了,沒有收到辨識結果。請再按住說話,並看「診斷紀錄」。");
+    setStatus("沒聽到聲音,請再按住說話", "error");
+    return;
+  }
   submit(alts);
 }
 
@@ -458,10 +496,15 @@ const mic = $("micBtn");
 mic.addEventListener("pointerdown", (e) => {
   if (state.mode !== "ptt") return;
   e.preventDefault();
+  dbg(`pointerdown(${e.pointerType})`);
   try { mic.setPointerCapture(e.pointerId); } catch { /* 不支援就算了 */ }
   pttStart();
 });
-["pointerup", "pointercancel"].forEach((t) => mic.addEventListener(t, () => state.mode === "ptt" && pttEnd()));
+["pointerup", "pointercancel"].forEach((t) => mic.addEventListener(t, () => {
+  if (state.mode !== "ptt") return;
+  dbg(t);
+  pttEnd();
+}));
 mic.addEventListener("contextmenu", (e) => state.mode === "ptt" && e.preventDefault());
 // 電腦上也可以按住空白鍵說話(游標不在輸入框時)
 addEventListener("keydown", (e) => {

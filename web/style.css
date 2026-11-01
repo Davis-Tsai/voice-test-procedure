@@ -53,6 +53,7 @@ summary { cursor: pointer; color: var(--muted); }
 .settings { padding-top: 8px; }
 .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; align-items: center; }
 #source { font-weight: 700; }
+#debug { font-size: .75rem; line-height: 1.4; background: #f0f0f2; border-radius: 8px; padding: 8px; max-height: 14em; overflow: auto; white-space: pre-wrap; word-break: break-all; }
 .hint { color: var(--muted); font-size: .85rem; line-height: 1.5; }
 
 @media (min-width: 900px) {
