@@ -23,7 +23,9 @@ document.getElementById("version").textContent = `版本:${BUILD.startsWith("__"
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const synth = window.speechSynthesis;
-const RATE_LEVELS = { slow: 1.2, normal: 1.45, fast: 1.7 };
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+// 速度等級對應的倍率。同樣的數字在 iPhone 聽起來比 Android 快,所以 iPhone/iPad 整體低一級
+const RATE_LEVELS = isIOS ? { slow: 1.0, normal: 1.2, fast: 1.45 } : { slow: 1.2, normal: 1.45, fast: 1.7 };
 const KEY = { procs: "vtp.procs.v1", source: "vtp.source.v1", rate: "vtp.rate.v2", mode: "vtp.mode.v1", greet: "vtp.greet.v1", readHits: "vtp.readhits.v1" };
 
 const state = {
@@ -46,7 +48,7 @@ const state = {
   rec: null,
   typedResolve: null, // 流程正在等輸入時,打字查詢送到這裡
   speakToken: 0,
-  rate: 1.45,         // 朗讀速度(倍率),由下面的 RATE_LEVELS 依「慢 / 正常 / 快」決定
+  rate: RATE_LEVELS.normal, // 朗讀速度(倍率),依「慢 / 正常 / 快」與裝置決定
   wake: null,
 };
 
@@ -852,7 +854,6 @@ if (!SR) showNotice("這個瀏覽器不支援語音辨識(建議用 Chrome、Edg
 else if (!synth) showNotice("這個瀏覽器不支援語音朗讀。");
 
 // 預設:iPhone/iPad 的 Safari 不允許自動開始聆聽,預設用按住說話;其他裝置預設常開監聽
-const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 const isPhone = isIOS || /Android/i.test(navigator.userAgent);
 if (isPhone) {
   const label = document.querySelector('input[name="mode"][value="ptt"] + span');
