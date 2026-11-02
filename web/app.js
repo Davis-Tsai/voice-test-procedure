@@ -34,6 +34,7 @@ const state = {
   active: false,      // 已按「開始」,正在聆聽/處理的連續流程
   handling: false,    // 單次打字查詢處理中
   runId: 0,
+  epoch: 0,           // 每次停止 / 切換模式就加一:舊的流程看到編號變了就自己結束,不會變成殭屍繼續跑
   finCurrent: null,
   pending: null,      // 朗讀時被打斷的打字查詢
   awaitingAnswer: false, // 正在問「請問是…嗎?」等是/不是
@@ -401,12 +402,13 @@ async function listenText(accept) {
 
 // ───────────── 網路 ─────────────
 
-async function ensureOnline() {
+async function ensureOnline(alive = () => true) {
   if (navigator.onLine) return;
   setStatus("沒有網路,等待連線中…", "error");
   await speak(["網路沒有連線,請檢查網路。連線後會自動繼續。"]);
-  while (!navigator.onLine && state.active) await new Promise((r) => addEventListener("online", r, { once: true }));
-  if (state.active) await say(["網路已恢復。"]);
+  // 每秒檢查一次,這樣按了「停止」或切換模式後,不會一直卡在這裡
+  while (!navigator.onLine && alive()) await Promise.race([new Promise((r) => addEventListener("online", r, { once: true })), sleep(1000)]);
+  if (alive() && navigator.onLine) await say(["網路已恢復。"]);
 }
 
 // ───────────── 主流程 ─────────────
@@ -465,18 +467,25 @@ async function handle(heard) {
   let chosen = null;
   if (confident) chosen = ranked[0].proc;
   else {
+    const epoch = state.epoch;
+    const cancelled = () => epoch !== state.epoch; // 中途按了「停止」或切換模式
     state.awaitingAnswer = true;
     for (const { proc } of ranked) { // 不太確定:逐一詢問最接近的幾個
       setHeard(`聽到:${heard}`);
       showConfirm(`請問是 ${proc.id} ${proc.name} 嗎?`); // 也可以直接點下面的「是 / 不是」
       await say([`請問是 ${L.spokenId(proc.id)}。${proc.name} 嗎?請回答是或不是。`]);
+      if (cancelled()) break;
       let ans = null;
       for (let i = 0; i < 2; i++) {
-        ans = L.yesNo(await listenText((t) => L.yesNo(t) !== null));
+        const t = await listenText((x) => L.yesNo(x) !== null);
+        if (cancelled()) break;
+        ans = L.yesNo(t);
         if (ans !== null) break;
       }
+      if (cancelled()) break;
       if (ans) { chosen = proc; break; }
     }
+    if (cancelled()) return; // 已經取消:不要再念「找不到」、也不要再打開麥克風
     state.awaitingAnswer = false;
     hideConfirm();
   }
@@ -490,6 +499,8 @@ async function handle(heard) {
 }
 
 async function session() {
+  const sid = ++state.epoch; // 這一輪的編號;stopSession / setMode 會把 epoch 加一,舊的迴圈看到編號不同就自己結束
+  const alive = () => state.active && sid === state.epoch;
   state.active = true;
   updateButtons();
   keepAwake();
@@ -505,14 +516,14 @@ async function session() {
   }
 
   let fails = 0; // 連續「立刻結束、沒有聽到任何東西」的次數,避免默默空轉
-  while (state.active) {
-    await ensureOnline();
-    if (!state.active) break;
+  while (alive()) {
+    await ensureOnline(alive);
+    if (!alive()) break;
     // iPhone 的 Safari 朗讀完立刻開麥克風,常常會被判定為「靜音」,等一下再開
     if (isIOS) await sleep(900);
-    if (!state.active) break;
+    if (!alive()) break;
     const r = await getInput();
-    if (!state.active) break;
+    if (!alive()) break;
 
     if (r.transient || (!r.fatal && !r.network && !r.needTap && !r.alts?.length && r.ms < 1500)) {
       fails++;
@@ -538,18 +549,26 @@ async function session() {
     setHeard(`聽到:${heard}`);
     await handle(heard);
   }
-  stopSession();
+  if (sid === state.epoch) stopSession(); // 如果已經被新的一輪取代,就不要動新一輪的狀態
+}
+
+/** 取消所有進行中的流程:舊的 session / 確認問題看到 epoch 變了就會結束。 */
+function cancelFlows() {
+  state.epoch++;
+  state.pending = null;          // 不要讓被打斷時留下的舊查詢,在下次開始時才突然冒出來
+  state.awaitingAnswer = false;
+  try { state.rec?.abort(); } catch { /* 已結束 */ }
+  state.typedResolve?.("");
+  stopSpeaking();
+  hideConfirm();
 }
 
 function stopSession() {
   state.active = false;
-  try { state.rec?.abort(); } catch { /* 已結束 */ }
-  state.typedResolve?.("");
-  stopSpeaking();
+  cancelFlows();
   state.wake?.release?.().catch(() => {});
   state.wake = null;
   setStatus("已停止", "idle");
-  hideConfirm();
   updateButtons();
 }
 
@@ -591,6 +610,11 @@ async function pttStart() {
   if (state.mode !== "ptt") return;
   if (state.ptt) { // 點一下模式進行中,再按一次 = 說完了
     if (state.ptt.tapMode) {
+      if (!state.ptt.started) { // 第一次點擊還在等上一次辨識結束,還沒真的開始收音:直接取消
+        dbg("還沒開始收音就再按一次,取消");
+        state.ptt.cancelled = true;
+        return;
+      }
       dbg("再按一次,提早結束收音");
       setStatus("辨識中…", "think");
       try { state.ptt.rec.stop(); } catch { /* 已結束 */ }
@@ -648,15 +672,21 @@ async function pttStart() {
   if (prev) await Promise.race([prev, sleep(1500)]);
   if (isIOS) await sleep(300);
   if (state.ptt !== press) return; // 等待期間已被取消(切換模式等)
-  if (press.released && !press.tapMode) { // 等待期間已經放開(而且不是點一下):不用再開始
+  if (press.cancelled || (press.released && !press.tapMode)) { // 等待期間已經取消,或已經放開(而且不是點一下):不用再開始
     state.ptt = null;
     press.resolveEnded();
+    $("micBtn").classList.remove("on");
+    updateButtons();
+    idleStatus();
     return;
   }
+  press.started = true;
   try { r.start(); } catch (err) {
     dbg(`start() 丟出例外:${err.name} ${err.message}`);
     state.ptt = null;
+    press.resolveEnded();
     $("micBtn").classList.remove("on");
+    updateButtons();
     showNotice("無法開始收音,請再按一次。");
   }
 }
@@ -798,10 +828,11 @@ $("listBtn").addEventListener("click", () => {
 // 聆聽模式切換:常開監聽 / 按住說話
 function setMode(mode, { save = true } = {}) {
   if (save) unlockSpeech(); // 使用者點了切換鈕:這是解鎖朗讀的好時機
-  if (state.active) stopSession();
+  stopSession(); // 取消進行中的聆聽、朗讀與確認問題(一次性查詢也會被取消)
   if (state.ptt) {
     try { state.ptt.rec.abort(); } catch { /* 已結束 */ }
     state.ptt.tooShort = true;
+    state.ptt.resolveEnded(); // 還沒真的開始的辨識不會有結束通知,不放行的話下一次會白等 1.5 秒
     state.ptt = null;
   }
   state.mode = mode;
