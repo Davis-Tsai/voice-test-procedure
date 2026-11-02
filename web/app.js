@@ -6,8 +6,10 @@ const BUILD = "__BUILD__";
 
 const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const PARA_PAUSE_MS = 120; // 念完一段(例如一個步驟)到下一段之間的停頓
+if (new URLSearchParams(location.search).has("debug")) document.getElementById("debugBox").hidden = false;
 
-// 診斷紀錄:顯示在「資料與設定 → 診斷紀錄」,手機上沒有開發者工具時用來查問題
+// 診斷紀錄:平常是隱藏的;網址後面加上 ?debug 才會在「資料與設定」裡顯示,手機上沒有開發者工具時用來查問題
 const T0 = Date.now();
 const dbgLines = [];
 function dbg(msg) {
@@ -271,7 +273,7 @@ async function speak(paragraphs, onPara) {
         if (token !== state.speakToken) return;
         await utter(seg.text, seg.lang);
       }
-      await sleep(550);
+      await sleep(PARA_PAUSE_MS);
     }
   } finally {
     if (token === state.speakToken) $("stopSpeakBtn").disabled = true;
@@ -514,7 +516,7 @@ async function session() {
       fails++;
       dbg(`連續快速失敗 ${fails} 次`);
       if (fails >= 3) {
-        showNotice(r.transient || "麥克風一直立刻結束、沒有收到聲音。請看「診斷紀錄」;也可以改用下方輸入框,點進去按鍵盤上的麥克風來聽寫。");
+        showNotice(r.transient || "麥克風一直立刻結束、沒有收到聲音。請稍後再試;也可以改用下方輸入框,點進去按鍵盤上的麥克風來聽寫。");
         break;
       }
       await sleep(1500);
@@ -713,7 +715,7 @@ function pttFinished(press) {
       ? "沒有偵測到說話聲。請按住後等畫面出現「請說話」再開口,並靠近麥克風、說大聲一點。"
       : press.released
         ? "沒有收到辨識結果,請再按住說話。"
-        : "收音自己提早結束了,沒有收到辨識結果。請再按住說話,並看「診斷紀錄」。");
+        : "收音自己提早結束了,沒有收到辨識結果。請再按住說話。");
     setStatus("沒聽到聲音,請再按住說話", "error");
     return;
   }

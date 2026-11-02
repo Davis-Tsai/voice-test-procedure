@@ -117,7 +117,7 @@ class Speaker:
     EDGE_VOICES = {"zh": "zh-TW-HsiaoChenNeural", "en": "en-US-AriaNeural"}
     EDGE_HOST = "speech.platform.bing.com"
     PAUSE_SEG = 0.05   # 同一句內不同語言片段之間的停頓(秒)
-    PAUSE_PARA = 0.6   # 段落(例如每一步)之間的停頓(秒)
+    PAUSE_PARA = 0.25  # 段落(例如每一步)之間的停頓(秒)
 
     def __init__(self, mode="auto", rate="+0%", zh_voice=None, en_voice=None, offline_rate=175):
         self.mode = mode
