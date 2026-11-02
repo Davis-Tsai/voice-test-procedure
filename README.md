@@ -35,6 +35,8 @@
 | 重複 / 再說一次 | 重新朗讀上一個項目 |
 | 結束 / 離開 | 離開程式 |
 
+> 要一起維護這個專案?請先看 [CONTRIBUTING.md](CONTRIBUTING.md):不用記指令,用 GitHub Desktop 就能同步與送出修改。
+
 ## 對照表
 
 專案附的是**範例**資料 `procedures.sample.xlsx`(5 筆假資料),下載後不用設定就能直接試。
