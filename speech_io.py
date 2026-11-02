@@ -119,10 +119,12 @@ class Speaker:
     PAUSE_SEG = 0.05   # 同一句內不同語言片段之間的停頓(秒)
     PAUSE_PARA = 0.25  # 段落(例如每一步)之間的停頓(秒)
 
-    def __init__(self, mode="auto", rate="+0%", zh_voice=None, en_voice=None, offline_rate=175):
+    # 朗讀速度等級 → 倍率(與網頁版一致:慢 / 正常 / 快)
+    SPEEDS = {"slow": 1.2, "normal": 1.45, "fast": 1.7}
+
+    def __init__(self, mode="auto", speed="normal", zh_voice=None, en_voice=None):
         self.mode = mode
-        self.rate = rate
-        self.offline_rate = offline_rate
+        self.set_speed(speed)
         self._stop = False   # stop() 被呼叫後,正在念的內容會盡快結束
         self._out = None     # 目前正在播放的輸出串流
         self.voices = dict(self.EDGE_VOICES)
@@ -141,6 +143,12 @@ class Speaker:
                     items[-1] = (prev[0], prev[1], prev[2] + gap, prev[3])
                 items.append((lang, text, self.PAUSE_PARA if i == len(segs) - 1 else self.PAUSE_SEG, n))
         return items
+
+    def set_speed(self, level):
+        """level: slow / normal / fast。線上語音用百分比(+45% = 1.45 倍),離線語音用每分鐘字數。"""
+        m = self.SPEEDS.get(level, self.SPEEDS["normal"])
+        self.rate = f"{round((m - 1) * 100):+d}%"
+        self.offline_rate = int(175 * m)
 
     def stop(self):
         """中斷正在念的內容(可從別的執行緒呼叫)。"""

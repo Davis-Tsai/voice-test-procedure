@@ -363,7 +363,6 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--excel", help="對照表檔案(預設 procedures.xlsx;找不到時改用範例 procedures.sample.xlsx)")
     ap.add_argument("--tts", choices=["auto", "online", "offline"], default="auto", help="朗讀:有網路用線上,否則離線")
-    ap.add_argument("--rate", default="+0%", help="線上朗讀速度,例如 -10%% 較慢、+20%% 較快")
     ap.add_argument("--threshold", type=int, default=250, help="麥克風音量門檻,太吵就調高(預設 250)")
     ap.add_argument("--in-device", help="麥克風裝置編號或名稱(可用 --devices 查看)")
     ap.add_argument("--out-device", help="播放裝置編號或名稱")
@@ -387,9 +386,14 @@ def main():
         return
 
     settings = Settings(app_dir() / "settings.json")
-    speaker = Speaker(args.tts, rate=args.rate)
+    speaker = Speaker(args.tts, settings.speed)
+
+    def on_speed(level):  # 視窗上選了朗讀速度:立刻生效並記住
+        speaker.set_speed(level)
+        settings.set(speed=level)
+
     listener = Listener(min_threshold=args.threshold)
-    ui = (NullUI if args.no_gui else WindowUI)(procs, settings, speaker.stop)
+    ui = (NullUI if args.no_gui else WindowUI)(procs, settings, speaker.stop, on_speed)
     voice = Voice(procs, listener, speaker, ui, settings)
     print(f"已載入 {len(procs)} 個測試項目。" + ("Ctrl+C 可隨時結束。" if args.no_gui else "關閉視窗即可結束。"))
 

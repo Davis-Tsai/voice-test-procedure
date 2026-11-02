@@ -17,6 +17,7 @@ import procedures as pr
 FONT = "Microsoft JhengHei UI"
 COLORS = {"listen": "#1a7f37", "think": "#b36b00", "speak": "#0b57d0", "error": "#c5221f", "idle": "#555555"}
 MODES = (("auto", "常開監聽"), ("tap", "點擊監聽"))
+SPEEDS = (("slow", "慢"), ("normal", "正常"), ("fast", "快"))
 
 
 def build_results(procs, query, list_all):
@@ -52,7 +53,7 @@ class NullUI(_Base):
     """不開視窗(--no-gui):只用文字。在終端機輸入文字就等於打字查詢。"""
     headless = True
 
-    def __init__(self, procs, settings, on_interrupt):
+    def __init__(self, procs, settings, on_interrupt, on_speed=None):
         super().__init__(procs, settings, on_interrupt)
         self._query = ""
         self._list_all = False
@@ -88,12 +89,14 @@ class NullUI(_Base):
 
 
 class WindowUI(_Base):
-    def __init__(self, procs, settings, on_interrupt):
+    def __init__(self, procs, settings, on_interrupt, on_speed=None):
         super().__init__(procs, settings, on_interrupt)
         self.q = queue.Queue()  # 背景執行緒要我做的事(tkinter 只能在主執行緒操作)
         self.list_all = False
         self.hits = []
         self.mode = settings.mode
+        self.speed = settings.speed
+        self.on_speed = on_speed
 
         root = self.root = tk.Tk()
         root.title("語音測試步驟")
@@ -115,6 +118,17 @@ class WindowUI(_Base):
                        command=lambda: settings.set(intro=self.intro_var.get())).pack(side="left")
         tk.Checkbutton(opts, text="查詢找到 1~3 項時念出來", variable=self.hits_var, font=(FONT, 11),
                        command=lambda: settings.set(read_hits=self.hits_var.get())).pack(side="left", padx=12)
+
+        spd = tk.Frame(bottom)
+        spd.pack(side="bottom", fill="x", pady=(6, 0))
+        tk.Label(spd, text="朗讀速度", font=(FONT, 11)).pack(side="left", padx=(0, 8))
+        self.speed_btns = {}
+        for lv, label in SPEEDS:
+            b = tk.Button(spd, text=label, font=(FONT, 11), relief="solid", bd=1, width=6,
+                          command=lambda lv=lv: self._set_speed(lv))
+            b.pack(side="left")
+            self.speed_btns[lv] = b
+        self._paint_speeds()
 
         form = tk.Frame(bottom)
         form.pack(side="bottom", fill="x", pady=(8, 0))
@@ -286,6 +300,18 @@ class WindowUI(_Base):
             on = m == self.mode
             b.config(bg="#1c1c1e" if on else "white", fg="white" if on else "black",
                      activebackground="#1c1c1e" if on else "white", activeforeground="white" if on else "black")
+
+    def _paint_speeds(self):
+        for lv, b in self.speed_btns.items():
+            on = lv == self.speed
+            b.config(bg="#1c1c1e" if on else "white", fg="white" if on else "black",
+                     activebackground="#1c1c1e" if on else "white", activeforeground="white" if on else "black")
+
+    def _set_speed(self, level):
+        self.speed = level
+        self._paint_speeds()
+        if self.on_speed:
+            self.on_speed(level)
 
     def _show_body(self, results):
         for w in (self.title_lbl, self.steps, self.results):

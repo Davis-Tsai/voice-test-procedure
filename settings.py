@@ -7,6 +7,7 @@ DEFAULTS = {
     "mode": "auto",       # auto 常開監聽 | tap 點擊監聽
     "intro": True,        # 第一次按「開始」時念一次使用說明
     "read_hits": True,    # 語音查詢找到 1~3 項時把項目念出來
+    "speed": "normal",    # 朗讀速度:slow 慢 | normal 正常 | fast 快
 }
 
 
