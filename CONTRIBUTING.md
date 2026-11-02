@@ -77,8 +77,12 @@
 - **改錯了想回到上一版:** 在 History 裡對那一筆按右鍵 → **Revert changes in commit**。
 - **不小心把真實的 Excel 或密碼 commit / 推上去了:** **立刻告訴擁有者,不要自己只是刪掉檔案**。因為專案是公開的,歷史紀錄裡還是看得到,需要另外處理(清除歷史、更換密碼)。
 
-## 七、給專案擁有者的一次性設定(建議)
+## 七、給專案擁有者
 
-- **要求用 Pull Request 才能改 `main`:** Settings → Branches → Add branch ruleset(或 Add classic branch protection rule)→ 對象 `main` → 勾選 **Require a pull request before merging**。這樣協作者即使誤操作也不會直接動到正式版。
+- **`main` 已經設定保護(已設定):** 必須經過 Pull Request,且需要 **1 位核准**才能合併;禁止強制推送和刪除分支;提出 PR 後如果又有新的修改,之前的核准會作廢,要重新核准。協作者不可能直接動到正式版。
+  - 擁有者(管理員)不受這些規則限制,可以直接推,也可以自己發的 PR 直接合併。
+  - 注意:任何有寫入權限的協作者都能核准別人的 PR。如果想只有擁有者能核准,需要另外設定 CODEOWNERS 或 rulesets。
+  - 想調整或拿掉:Settings → Branches → 找到 `main` 的規則。
+- **邀請協作者:** Settings → Collaborators → Add people,對方要到 Email 按接受邀請。
 - **審查重點:** 有沒有夾帶 `.xlsx` 真實資料、有沒有改到 `.github/workflows/`、網頁版和桌面版行為是否一致。
 - 合併後到 **Actions** 分頁確認 "Deploy web to GitHub Pages" 是綠色勾勾。
