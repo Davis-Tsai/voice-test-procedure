@@ -21,7 +21,8 @@ document.getElementById("version").textContent = `版本:${BUILD.startsWith("__"
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const synth = window.speechSynthesis;
-const KEY = { procs: "vtp.procs.v1", source: "vtp.source.v1", rate: "vtp.rate.v1", mode: "vtp.mode.v1", greet: "vtp.greet.v1", readHits: "vtp.readhits.v1" };
+const RATE_LEVELS = { slow: 1.2, normal: 1.45, fast: 1.7 };
+const KEY = { procs: "vtp.procs.v1", source: "vtp.source.v1", rate: "vtp.rate.v2", mode: "vtp.mode.v1", greet: "vtp.greet.v1", readHits: "vtp.readhits.v1" };
 
 const state = {
   procs: [],
@@ -43,7 +44,7 @@ const state = {
   rec: null,
   typedResolve: null, // 流程正在等輸入時,打字查詢送到這裡
   speakToken: 0,
-  rate: 1.2,          // 朗讀速度預設「正常」(設定裡可改,改了會記住)
+  rate: 1.45,         // 朗讀速度(倍率),由下面的 RATE_LEVELS 依「慢 / 正常 / 快」決定
   wake: null,
 };
 
@@ -826,7 +827,7 @@ $("greetOn").addEventListener("change", (e) => {
   localStorage.setItem(KEY.greet, e.target.checked ? "1" : "0");
 });
 $("rate").addEventListener("change", (e) => {
-  state.rate = Number(e.target.value);
+  state.rate = RATE_LEVELS[e.target.value];
   localStorage.setItem(KEY.rate, e.target.value);
 });
 document.addEventListener("visibilitychange", () => {
@@ -840,12 +841,10 @@ $("readHits").checked = state.readHits;
 state.greetOn = localStorage.getItem(KEY.greet) !== "0";
 $("greetOn").checked = state.greetOn;
 
-const savedRate = localStorage.getItem(KEY.rate);
-// 速度選項:慢 1、正常 1.2、快 1.45。以前存的是舊選項(0.85 / 1 / 1.2),換成最接近的新選項,
-// 這樣原本的速度不變,只是名稱各往上一級
-const RATES = [1, 1.2, 1.45];
-if (savedRate) state.rate = RATES.reduce((best, r) => (Math.abs(r - Number(savedRate)) < Math.abs(best - Number(savedRate)) ? r : best));
-$("rate").value = String(state.rate);
+// 速度等級對應的倍率;存檔記的是等級名稱,以後調整倍率不會讓大家的選擇錯位
+const savedLevel = RATE_LEVELS[localStorage.getItem(KEY.rate)] ? localStorage.getItem(KEY.rate) : "normal";
+state.rate = RATE_LEVELS[savedLevel];
+$("rate").value = savedLevel;
 
 if (!SR) showNotice("這個瀏覽器不支援語音辨識(建議用 Chrome、Edge 或 Safari)。仍可用下方輸入框打字查詢,並由語音朗讀。");
 else if (!synth) showNotice("這個瀏覽器不支援語音朗讀。");
