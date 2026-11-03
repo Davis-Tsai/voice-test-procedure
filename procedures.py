@@ -22,7 +22,8 @@ _HEADERS = {
     "aliases": ("別名", "别名", "alias", "aliases"),
     "steps": ("步驟", "步骤", "steps", "step"),
 }
-_STEP_PREFIX = re.compile(r"^\s*(?:第?\s*\d+\s*[步\.、\)）:：]|[①-⑳])\s*")
+# 「.」「:」後面緊接數字是小數或時間(3.3V、1:30),不是步驟編號,不能去掉
+_STEP_PREFIX = re.compile(r"^\s*(?:第?\s*\d+\s*(?:[步、\)）]|[\.:：](?!\d))|[①-⑳])\s*")
 
 
 @dataclass
