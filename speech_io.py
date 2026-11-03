@@ -67,6 +67,9 @@ _UNIT_RE = re.compile(
     r"(?<![A-Za-z])(\d+(?:\.\d+)?)\s*(" + "|".join(sorted(map(re.escape, _UNITS), key=len, reverse=True)) + r")(?![A-Za-z])"
 )
 
+# 速度 mph(大小寫都可能出現)整個念成中文,否則會變成中文數字後面接英文字母「M P H」
+_MPH_RE = re.compile(r"(?<![A-Za-z])mph(?![A-Za-z])", re.I)
+
 
 # 一個片段開頭的標點(例如英文編號後面接的「。」)不能交給語音念,否則會被念成「句號」;
 # 把它換成停頓:句號類停久一點,逗號類停短一點。片段中間的標點語音本來就只會停頓,不用處理。
@@ -85,6 +88,7 @@ def _gap(punct):
 
 def segment(text):
     """把一段文字切成 [(語言, 文字, 前面要停頓幾秒)]:英文走英文語音,其餘(中文與數字)走中文語音。"""
+    text = _MPH_RE.sub("英里每小時", text)
     text = _UNIT_RE.sub(lambda m: m.group(1) + _UNITS[m.group(2)], text)
     parts, pos = [], 0
     for m in _DECIMAL.finditer(text):

@@ -233,6 +233,8 @@ const UNIT_RE = new RegExp(
   `(\\d+(?:\\.\\d+)?)\\s*(${Object.keys(UNITS).sort((a, b) => b.length - a.length).map(escapeRe).join("|")})(?![A-Za-z])`,
   "g"
 );
+// 速度 mph(大小寫都可能出現)整個念成中文,否則會變成中文數字後面接英文字母「M P H」
+const MPH_RE = /mph(?![A-Za-z])/gi;
 const DECIMAL = /\d+(?:\.\d+)+/g;
 const isAlnumOrDot = (c) => c !== undefined && /[A-Za-z0-9.]/.test(c);
 const isLetter = (c) => c !== undefined && /[A-Za-z]/.test(c);
@@ -256,9 +258,9 @@ const gapOf = (p) => (/[。；：！？…;:!?.]/.test(p) ? 0.3 : /[，、,]/.te
 
 /** 切成 [{lang, text, gap}]:英文走英文語音,其餘(中文與數字)走中文語音;小數與 IP 用中文念成「點」。 */
 export function segment(input) {
-  const text = input.replace(UNIT_RE, (m, num, unit, offset, whole) =>
-    isLetter(whole[offset - 1]) ? m : num + UNITS[unit]
-  );
+  const text = input
+    .replace(MPH_RE, (m, offset, whole) => (isLetter(whole[offset - 1]) ? m : "英里每小時"))
+    .replace(UNIT_RE, (m, num, unit, offset, whole) => (isLetter(whole[offset - 1]) ? m : num + UNITS[unit]));
   const parts = [];
   let pos = 0;
   for (const m of text.matchAll(DECIMAL)) {
