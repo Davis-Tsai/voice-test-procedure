@@ -885,7 +885,10 @@ if (!SR) showNotice("這個瀏覽器不支援語音辨識(建議用 Chrome、Edg
 else if (!synth) showNotice("這個瀏覽器不支援語音朗讀。");
 
 // 預設:iPhone/iPad 的 Safari 不允許自動開始聆聽,預設用按住說話;其他裝置預設常開監聽
-const isPhone = isIOS || /Android/i.test(navigator.userAgent);
+// 手機瀏覽器切到「電腦版網站」時,User-Agent 不再有 Android;主要輸入裝置是觸控(pointer: coarse)的也算手機
+const isPhone = isIOS || /Android/i.test(navigator.userAgent)
+  || (navigator.maxTouchPoints > 0 && matchMedia("(pointer: coarse)").matches);
+dbg(`isPhone=${isPhone} isIOS=${isIOS} touch=${navigator.maxTouchPoints} UA=${navigator.userAgent}`);
 if (isPhone) {
   const label = document.querySelector('input[name="mode"][value="ptt"] + span');
   if (label) label.textContent = "點擊監聽";
