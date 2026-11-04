@@ -122,6 +122,7 @@ class Speaker:
     EDGE_HOST = "speech.platform.bing.com"
     PAUSE_SEG = 0.05   # 同一句內不同語言片段之間的停頓(秒)
     PAUSE_PARA = 0.25  # 段落(例如每一步)之間的停頓(秒)
+    WRITE_CHUNK = 2400  # 每次寫入播放串流的取樣數(24000 Hz 下 0.1 秒),也是按「停止」後最久還會多念的長度
 
     # 朗讀速度等級 → 倍率(與網頁版一致:慢 / 正常 / 快)
     SPEEDS = {"slow": 1.2, "normal": 1.45, "fast": 1.7}
@@ -130,7 +131,6 @@ class Speaker:
         self.mode = mode
         self.set_speed(speed)
         self._stop = False   # stop() 被呼叫後,正在念的內容會盡快結束
-        self._out = None     # 目前正在播放的輸出串流
         self.voices = dict(self.EDGE_VOICES)
         if zh_voice:
             self.voices["zh"] = zh_voice
@@ -155,14 +155,9 @@ class Speaker:
         self.offline_rate = int(175 * m)
 
     def stop(self):
-        """中斷正在念的內容(可從別的執行緒呼叫)。"""
+        """中斷正在念的內容(可從別的執行緒呼叫)。只舉旗,由正在念的那個執行緒自己停:
+        從別的執行緒對播放串流 abort,會讓還在寫入的 write() 在 macOS 上永遠不回來,朗讀流程就卡死了。"""
         self._stop = True
-        out = self._out
-        if out is not None:
-            try:
-                out.abort()
-            except Exception:
-                pass
 
     def speak_offline(self, paragraphs):
         """直接用 Windows 內建語音念(不需要網路),用來告知「網路沒連線」。"""
@@ -218,27 +213,42 @@ class Speaker:
         tasks = [asyncio.ensure_future(synth(lang, text)) for lang, text, _, _ in items]
         loop = asyncio.get_running_loop()
         current = None
+
+        async def ready(task):
+            """等這一段合成好;等的時候被 stop() 就回傳 None,不必等到網路逾時。"""
+            while not task.done():
+                if self._stop:
+                    return None
+                await asyncio.wait({task}, timeout=0.1)
+            return await task
+
         try:
             # 整段用同一個輸出串流,片段之間才不會因為重開裝置而出現空隙
             with sd.OutputStream(samplerate=24000, channels=1, dtype="int16") as out:
-                self._out = out
-                for i, (task, (_, _, pause, para)) in enumerate(zip(tasks, items)):
+                try:
+                    for i, (task, (_, _, pause, para)) in enumerate(zip(tasks, items)):
+                        if self._stop:
+                            break
+                        try:
+                            audio = await ready(task)
+                        except Exception as e:
+                            e.played = i
+                            raise
+                        if audio is None or self._stop:
+                            break
+                        if on_start and para != current:
+                            current = para
+                            on_start(para)
+                        audio = np.concatenate([audio, np.zeros(int(24000 * pause), dtype=np.int16)])
+                        # 切成小段寫入,每段之間看一下有沒有被要求停止
+                        for off in range(0, len(audio), self.WRITE_CHUNK):
+                            if self._stop:
+                                break
+                            await loop.run_in_executor(None, out.write, audio[off:off + self.WRITE_CHUNK].reshape(-1, 1))
+                finally:
                     if self._stop:
-                        break
-                    try:
-                        audio = await task
-                    except Exception as e:
-                        e.played = i
-                        raise
-                    if self._stop:
-                        break
-                    if on_start and para != current:
-                        current = para
-                        on_start(para)
-                    audio = np.concatenate([audio, np.zeros(int(24000 * pause), dtype=np.int16)])
-                    await loop.run_in_executor(None, out.write, audio.reshape(-1, 1))
+                        out.abort()  # 由這個執行緒自己立刻停掉還沒播完的聲音
         finally:
-            self._out = None
             for t in tasks:
                 t.cancel()
 
