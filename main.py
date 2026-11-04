@@ -23,11 +23,15 @@ def spoken_id(pid):
     return re.sub(r" +", " ", spaced).strip()
 
 
-def script(p):
+def script(p, numbered=True):
     """組出要朗讀的內容:每個元素是一段,段與段之間會停頓。
-    第 0 段是編號與名稱,第 1~N 段是各步驟(段號就是步驟號),最後一段是結尾。"""
-    paras = [f"{spoken_id(p.id)}。{p.name}。共 {len(p.steps)} 個步驟。"]
-    paras += [f"第 {i} 步。{s}" for i, s in enumerate(p.steps, 1)]
+    第 0 段是編號與名稱,第 1~N 段是各步驟(段號就是步驟號),最後一段是結尾。
+    numbered=False 時不念「共 N 個步驟」「第 N 步」,每一行就照原文念(拿來念文章)。"""
+    if numbered:
+        paras = [f"{spoken_id(p.id)}。{p.name}。共 {len(p.steps)} 個步驟。"]
+        paras += [f"第 {i} 步。{s}" for i, s in enumerate(p.steps, 1)]
+    else:
+        paras = [f"{spoken_id(p.id)}。{p.name}。", *p.steps]
     paras.append("以上。")
     return paras
 
@@ -110,7 +114,7 @@ class Voice:
         self.ui.show(proc)
         self.ui.highlight(0)
         print(f"→ {proc.id} {proc.name}")
-        self.say(script(proc), on_start=self.ui.highlight)
+        self.say(script(proc, self.settings.numbered), on_start=self.ui.highlight)
         self.ui.highlight(0)
 
     # ───── 聆聽(背景錄音,結果以事件送回來)─────

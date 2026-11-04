@@ -224,8 +224,12 @@ export function spokenId(pid) {
   return pid.replace(/-/g, " ").replace(/[A-Za-z0-9]/g, (c) => c + " ").replace(/ +/g, " ").trim();
 }
 
-/** 每個元素是一段。第 0 段是編號與名稱,第 1~N 段是各步驟(段號就是步驟號),最後一段是結尾。 */
-export function script(p) {
+/**
+ * 每個元素是一段。第 0 段是編號與名稱,第 1~N 段是各步驟(段號就是步驟號),最後一段是結尾。
+ * numbered=false 時不念「共 N 個步驟」「第 N 步」,每一行就照原文念(拿來念文章)。
+ */
+export function script(p, numbered = true) {
+  if (!numbered) return [`${spokenId(p.id)}。${p.name}。`, ...p.steps, "以上。"];
   return [
     `${spokenId(p.id)}。${p.name}。共 ${p.steps.length} 個步驟。`,
     ...p.steps.map((s, i) => `第 ${i + 1} 步。${s}`),

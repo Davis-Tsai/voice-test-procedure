@@ -146,12 +146,15 @@ class WindowUI(_Base):
 
         self.intro_var = tk.BooleanVar(value=settings.intro)
         self.hits_var = tk.BooleanVar(value=settings.read_hits)
+        self.num_var = tk.BooleanVar(value=settings.numbered)
         opts = tk.Frame(bottom)
         opts.pack(side="bottom", fill="x", pady=(6, 0))
         tk.Checkbutton(opts, text="第一次按「開始」念使用說明", variable=self.intro_var, font=(FONT, 11),
                        command=lambda: settings.set(intro=self.intro_var.get())).pack(side="left")
         tk.Checkbutton(opts, text="查詢找到 1~3 項時念出來", variable=self.hits_var, font=(FONT, 11),
                        command=lambda: settings.set(read_hits=self.hits_var.get())).pack(side="left", padx=12)
+        tk.Checkbutton(opts, text="步驟加上編號", variable=self.num_var, font=(FONT, 11),
+                       command=lambda: settings.set(numbered=self.num_var.get())).pack(side="left")
 
         src = tk.Frame(bottom)
         src.pack(side="bottom", fill="x", pady=(6, 0))
@@ -260,7 +263,8 @@ class WindowUI(_Base):
             self.steps_count = len(proc.steps)
             self.steps.config(state="normal")
             self.steps.delete("1.0", "end")
-            self.steps.insert("1.0", "\n".join(f"{i}. {s}" for i, s in enumerate(proc.steps, 1)))
+            numbered = self.settings.numbered  # 沒有編號時每一行就是原文(拿來念文章)
+            self.steps.insert("1.0", "\n".join(f"{i}. {s}" if numbered else s for i, s in enumerate(proc.steps, 1)))
             self.steps.config(state="disabled")
         self._post(do)
 

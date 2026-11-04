@@ -26,7 +26,7 @@ const synth = window.speechSynthesis;
 const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 // 速度等級對應的倍率。同樣的數字在 iPhone 聽起來比 Android 快,所以 iPhone/iPad 整體低一級
 const RATE_LEVELS = isIOS ? { slow: 1.0, normal: 1.2, fast: 1.45 } : { slow: 1.2, normal: 1.45, fast: 1.7 };
-const KEY = { procs: "vtp.procs.v1", source: "vtp.source.v1", rate: "vtp.rate.v2", mode: "vtp.mode.v1", greet: "vtp.greet.v1", readHits: "vtp.readhits.v1" };
+const KEY = { procs: "vtp.procs.v1", source: "vtp.source.v1", rate: "vtp.rate.v2", mode: "vtp.mode.v1", greet: "vtp.greet.v1", readHits: "vtp.readhits.v1", numbered: "vtp.numbered.v1" };
 
 const state = {
   procs: [],
@@ -39,6 +39,7 @@ const state = {
   pending: null,      // 朗讀時被打斷的打字查詢
   awaitingAnswer: false, // 正在問「請問是…嗎?」等是/不是
   readHits: true,     // 語音查詢找到 1~3 項時是否念出內容(設定裡可關閉)
+  numbered: true,     // 朗讀與畫面是否自動加上步驟編號(關掉就適合拿來念文章)
   listAll: false,     // 「清單」按鈕:顯示全部項目
   greetOn: true,      // 是否念開場說明(設定裡可關閉)
   greeted: false,     // 這次開啟網頁後是否已念過開場說明,只念第一次
@@ -70,6 +71,7 @@ function showNotice(text) {
 function showProc(p) {
   $("title").textContent = `${p.id}  ${p.name}`;
   const ol = $("steps");
+  ol.classList.toggle("plain", !state.numbered);
   ol.replaceChildren(...p.steps.map((s) => Object.assign(document.createElement("li"), { textContent: s })));
 }
 
@@ -304,7 +306,7 @@ function clearSearch() {
 async function read(proc) {
   clearSearch();
   showProc(proc);
-  await say(L.script(proc), highlight);
+  await say(L.script(proc, state.numbered), highlight);
   highlight(0);
 }
 
@@ -859,6 +861,11 @@ $("readHits").addEventListener("change", (e) => {
   state.readHits = e.target.checked;
   localStorage.setItem(KEY.readHits, e.target.checked ? "1" : "0");
 });
+$("numbered").addEventListener("change", (e) => {
+  state.numbered = e.target.checked;
+  localStorage.setItem(KEY.numbered, e.target.checked ? "1" : "0");
+  if (state.last) $("steps").classList.toggle("plain", !state.numbered); // 目前畫面上的項目馬上換
+});
 $("greetOn").addEventListener("change", (e) => {
   state.greetOn = e.target.checked;
   localStorage.setItem(KEY.greet, e.target.checked ? "1" : "0");
@@ -875,6 +882,8 @@ document.addEventListener("visibilitychange", () => {
 
 state.readHits = localStorage.getItem(KEY.readHits) !== "0";
 $("readHits").checked = state.readHits;
+state.numbered = localStorage.getItem(KEY.numbered) !== "0";
+$("numbered").checked = state.numbered;
 state.greetOn = localStorage.getItem(KEY.greet) !== "0";
 $("greetOn").checked = state.greetOn;
 

@@ -26,6 +26,7 @@ h1 { font-size: 2rem; line-height: 1.25; margin: 8px 0 12px; word-break: break-w
   padding: 4px 8px; margin: 2px 0; border-radius: 6px;
 }
 #steps li::before { content: counter(s) ". "; }
+#steps.plain li::before { content: none; }
 #steps li.cur { background: var(--hl); font-weight: 700; }
 
 footer { border-top: 1px solid var(--line); padding: 10px 16px 12px; background: #fafafa; }

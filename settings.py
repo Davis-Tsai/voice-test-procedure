@@ -8,6 +8,7 @@ DEFAULTS = {
     "intro": True,        # 第一次按「開始」時念一次使用說明
     "read_hits": True,    # 語音查詢找到 1~3 項時把項目念出來
     "speed": "normal",    # 朗讀速度:slow 慢 | normal 正常 | fast 快
+    "numbered": True,     # 朗讀與畫面是否自動加上步驟編號(關掉就適合拿來念文章)
     "excel": "",          # 上次在視窗裡選的對照表檔案(空白 = 用預設的 procedures.xlsx)
 }
 
