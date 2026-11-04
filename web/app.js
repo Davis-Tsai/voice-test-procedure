@@ -117,7 +117,7 @@ function renderResults() {
       $("typed").blur(); // 收起手機鍵盤
       state.listAll = false;
       renderResults();
-      submit([proc.id]); // 用編號查詢,等同你說出完整編號
+      submit([L.pickText(proc, state.procs)]); // 用編號查詢,等同你說出完整編號
     });
     li.append(b);
     return li;
@@ -763,6 +763,7 @@ function collectAlts(results) {
 }
 
 async function keepAwake() {
+  if (state.wake && !state.wake.released) return; // 已經鎖著了,不要再多鎖一個(舊的會沒人釋放)
   try { state.wake = await navigator.wakeLock?.request("screen"); } catch { /* 不支援就算了 */ }
 }
 

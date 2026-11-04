@@ -129,7 +129,9 @@ def command(text):
     q = normalize(text)
     if any(w in q for w in _REPEAT):
         return "repeat"
-    if any(w in q for w in _QUIT):
+    # 離開程式沒辦法復原:整句話要幾乎只有指令本身(最多多兩個字,例如「結束程式」),
+    # 否則「退出休眠測試」這種聽不準的項目名稱會把程式關掉
+    if any(w in q and len(q) <= len(w) + 2 for w in _QUIT):
         return "quit"
     return None
 
@@ -144,6 +146,14 @@ def yes_no(text):
     if "错" in q:
         return False
     return None
+
+
+def pick_text(proc, procs):
+    """在清單裡點一個項目時,用來查詢它的文字。通常是編號;編號是空的,或去掉標點後和別的項目相同
+    (例如 TC-2.0 與 TC-20)時,用編號會查到別的項目或查不到,改用名稱。"""
+    if proc.id_key and sum(1 for p in procs if p.id_key == proc.id_key) == 1:
+        return proc.id
+    return proc.name or proc.id
 
 
 # ───────────── 關鍵字搜尋與語音查詢指令(與網頁版 logic.js 一致)─────────────
@@ -179,7 +189,8 @@ def search(query, procs):
 
 
 _PUNCT = " \t,。.,!?!?、::"
-_QUERY_PREFIX = re.compile(r"^(?:查詢|查询|搜尋|搜寻|搜索|尋找|寻找|查找|列出|找|search|find|list)\s*(.*)$", re.I)
+# 「找」後面接「不/沒」是別的意思(找不到…);英文前綴後面不能再接字母(listen、finding 不算)
+_QUERY_PREFIX = re.compile(r"^(?:查詢|查询|搜尋|搜寻|搜索|尋找|寻找|查找|列出|找(?![不沒没])|(?:search|find|list)(?![a-z]))\s*(.*)$", re.I)
 
 
 def parse_query(text):

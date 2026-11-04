@@ -434,9 +434,10 @@ class WindowUI(_Base):
 
     def _on_pick(self, event):
         i = self.lb.nearest(event.y)
-        if 0 <= i < len(self.hits):
+        box = self.lb.bbox(i) if 0 <= i < len(self.hits) else None
+        if box and box[1] <= event.y < box[1] + box[3]:  # 點在最後一項下面的空白處不算
             proc = self.hits[i]
             self.list_all = False
             self.var.set("")
             self._render()
-            self.emit("text", proc.id, interrupt=True)  # 用編號查詢,等同你說出完整編號
+            self.emit("text", pr.pick_text(proc, self.procs), interrupt=True)  # 用編號查詢,等同你說出完整編號

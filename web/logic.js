@@ -136,6 +136,15 @@ export function rank(text, procs, limit = 3) {
 }
 
 /**
+ * 在清單裡點一個項目時,用來查詢它的文字。通常是編號;編號是空的,或去掉標點後和別的項目相同
+ * (例如 TC-2.0 與 TC-20)時,用編號會查到別的項目或查不到,改用名稱。
+ */
+export function pickText(proc, procs) {
+  if (proc.idKey && procs.filter((p) => p.idKey === proc.idKey).length === 1) return proc.id;
+  return proc.name || proc.id;
+}
+
+/**
  * 關鍵字搜尋(打字查詢清單用):輸入幾個字(可用空白分成多個關鍵字),列出編號、名稱、別名含有這些字的所有項目。
  * 每個關鍵字都要找得到;編號開頭 > 編號內含 > 名稱 > 別名,同分維持原本順序。
  * 回傳 [{proc, score}]。
@@ -174,7 +183,8 @@ export function parseQuery(text) {
   const t = String(text).trim().replace(/^[\s,。.,!?!?、]+|[\s,。.,!?!?、]+$/g, "");
   if (/^(關閉|关闭|收起|隱藏|隐藏)(項目)?(清單|清单|列表)?$/.test(t) || /^(close|hide)(\s+list)?$/i.test(t)) return { type: "close" };
   if (/^(全部|所有|全部項目|所有項目|全部项目|所有项目|項目清單|项目清单|項目列表|项目列表|清單|清单|列表)$/.test(t)) return { type: "all" };
-  const m = t.match(/^(?:查詢|查询|搜尋|搜寻|搜索|尋找|寻找|查找|列出|找|search|find|list)\s*(.*)$/i);
+  // 「找」後面接「不/沒」是別的意思(找不到…);英文前綴後面不能再接字母(listen、finding 不算)
+  const m = t.match(/^(?:查詢|查询|搜尋|搜寻|搜索|尋找|寻找|查找|列出|找(?![不沒没])|(?:search|find|list)(?![a-z]))\s*(.*)$/i);
   if (!m) return null;
   const kw = m[1].replace(/^[\s,。.,!?!?、::]+|[\s,。.,!?!?、::]+$/g, "");
   if (/^(全部|所有)(項目|项目)?$/.test(kw) || /^all$/i.test(kw)) return { type: "all" };
@@ -192,7 +202,9 @@ const QUIT = ["結束", "结束", "離開", "离开", "退出", "quit", "exit"].
 export function command(text) {
   const q = normalize(text);
   if (REPEAT.some((w) => q.includes(w))) return "repeat";
-  if (QUIT.some((w) => q.includes(w))) return "quit";
+  // 離開程式沒辦法復原:整句話要幾乎只有指令本身(最多多兩個字,例如「結束程式」),
+  // 否則「退出休眠測試」這種聽不準的項目名稱會把程式關掉
+  if (QUIT.some((w) => q.includes(w) && q.length <= w.length + 2)) return "quit";
   return null;
 }
 
