@@ -5,12 +5,15 @@
   ("mode", "auto"|"tap")
   ("text", 字串)      打字查詢,或點了清單裡的項目(字串是項目編號)
   ("yes",) ("no",)    按了「是 / 不是」
+  ("procs", 項目清單)  用「選擇檔案」換了一份對照表
   ("quit",)          關閉視窗
 """
 import queue
 import sys
 import threading
 import tkinter as tk
+from pathlib import Path
+from tkinter import filedialog, messagebox
 
 import procedures as pr
 
@@ -53,7 +56,7 @@ class NullUI(_Base):
     """不開視窗(--no-gui):只用文字。在終端機輸入文字就等於打字查詢。"""
     headless = True
 
-    def __init__(self, procs, settings, on_interrupt, on_speed=None):
+    def __init__(self, procs, settings, on_interrupt, on_speed=None, source=""):
         super().__init__(procs, settings, on_interrupt)
         self._query = ""
         self._list_all = False
@@ -89,7 +92,7 @@ class NullUI(_Base):
 
 
 class WindowUI(_Base):
-    def __init__(self, procs, settings, on_interrupt, on_speed=None):
+    def __init__(self, procs, settings, on_interrupt, on_speed=None, source=""):
         super().__init__(procs, settings, on_interrupt)
         self.q = queue.Queue()  # 背景執行緒要我做的事(tkinter 只能在主執行緒操作)
         self.list_all = False
@@ -119,6 +122,12 @@ class WindowUI(_Base):
         tk.Checkbutton(opts, text="查詢找到 1~3 項時念出來", variable=self.hits_var, font=(FONT, 11),
                        command=lambda: settings.set(read_hits=self.hits_var.get())).pack(side="left", padx=12)
 
+        src = tk.Frame(bottom)
+        src.pack(side="bottom", fill="x", pady=(6, 0))
+        self.src_lbl = tk.Label(src, text=self._source_text(source), font=(FONT, 11), anchor="w", fg="#555555")
+        self.src_lbl.pack(side="left", fill="x", expand=True)
+        tk.Button(src, text="選擇檔案", font=(FONT, 11), command=self._choose_file).pack(side="right")
+
         spd = tk.Frame(bottom)
         spd.pack(side="bottom", fill="x", pady=(6, 0))
         tk.Label(spd, text="朗讀速度", font=(FONT, 11)).pack(side="left", padx=(0, 8))
@@ -139,6 +148,7 @@ class WindowUI(_Base):
         self.entry.bind("<Return>", lambda _e: self._submit())
         self.list_btn = tk.Button(form, text="清單", font=(FONT, 14), command=self._toggle_all)
         self.list_btn.pack(side="left", padx=(8, 0))
+        self.list_btn_bg = self.list_btn.cget("bg")  # 系統預設的按鈕底色(Windows 以外沒有 "SystemButtonFace" 這個顏色名)
         tk.Button(form, text="查詢", font=(FONT, 14), command=self._submit).pack(side="left", padx=(8, 0))
 
         bar = tk.Frame(bottom)
@@ -324,7 +334,7 @@ class WindowUI(_Base):
 
     def _render(self):
         res = build_results(self.procs, self.var.get(), self.list_all)
-        self.list_btn.config(bg="#1c1c1e" if self.list_all else "SystemButtonFace",
+        self.list_btn.config(bg="#1c1c1e" if self.list_all else self.list_btn_bg,
                              fg="white" if self.list_all else "black")
         if res is None:
             self.hits = []
@@ -337,6 +347,39 @@ class WindowUI(_Base):
             alias = f"    ({'、'.join(p.aliases)})" if p.aliases else ""
             self.lb.insert("end", f" {p.id}   {p.name}{alias}")
         self._show_body(results=True)
+
+    def _source_text(self, name):
+        return f"目前資料:{name}({len(self.procs)} 項)"
+
+    def _choose_file(self):
+        """選另一份對照表(Excel):讀得進來就換掉目前的項目,並記住,下次開啟程式直接用它。"""
+        opts = {"parent": self.root, "title": "選擇對照表",
+                "filetypes": [("Excel 檔", "*.xlsx"), ("所有檔案", "*.*")]}
+        last = Path(self.settings.excel) if self.settings.excel else None
+        if last and last.parent.exists():
+            opts["initialdir"] = str(last.parent)
+        path = filedialog.askopenfilename(**opts)
+        if not path:
+            return
+        try:
+            procs = pr.load_procedures(path)
+            if not procs:
+                raise ValueError("這個檔案裡沒有任何項目")
+        except Exception as e:
+            messagebox.showerror("無法載入", f"{Path(path).name}\n\n{e}", parent=self.root)
+            return
+        self.settings.set(excel=str(path))
+        self.procs = procs
+        self.hits, self.list_all = [], False
+        self.var.set("")
+        self.steps_count = 0
+        self.steps.config(state="normal")
+        self.steps.delete("1.0", "end")
+        self.steps.config(state="disabled")
+        self.title_lbl.config(text="已載入新的對照表,按下「開始」後說出項目名稱或編號")
+        self.src_lbl.config(text=self._source_text(Path(path).name))
+        self._render()
+        self.emit("procs", procs, interrupt=True)  # 讓語音流程也換成新的項目
 
     def _toggle_all(self):
         self.list_all = not self.list_all

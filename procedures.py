@@ -48,8 +48,11 @@ def _cell(value):
 
 
 def load_procedures(path):
-    ws = load_workbook(path, read_only=True, data_only=True).active
-    rows = list(ws.iter_rows(values_only=True))
+    wb = load_workbook(path, read_only=True, data_only=True)
+    try:
+        rows = list(wb.active.iter_rows(values_only=True))
+    finally:
+        wb.close()  # 讀完就放開檔案,否則在 Windows 上程式執行期間 Excel 無法存檔
     if not rows:
         raise ValueError(f"{path} 是空的")
 

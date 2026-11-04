@@ -45,12 +45,17 @@ def resource_dir():
     return Path(getattr(sys, "_MEIPASS", app_dir()))
 
 
-def find_excel(path):
-    """--excel 指定的檔案優先;沒指定就用程式資料夾裡的 procedures.xlsx,都沒有就用範例檔。"""
+def find_excel(path, saved=""):
+    """--excel 指定的檔案優先;其次是上次在視窗裡「選擇檔案」選的檔案;
+    再來是程式資料夾裡的 procedures.xlsx,都沒有就用範例檔。"""
     if path:
         if not Path(path).exists():
             sys.exit(f"找不到對照表:{path}")
         return path
+    if saved:
+        if Path(saved).exists():
+            return saved
+        print(f"[上次選的對照表找不到了:{saved},改用預設]")
     own = app_dir() / DEFAULT_EXCEL
     if own.exists():
         return own
@@ -173,6 +178,8 @@ class Voice:
             self.stop_capture()
         elif kind in ("mic", "mode"):
             self.control(ev)
+        elif kind == "procs":
+            self.set_procs(ev[1])
         elif kind in ("voice", "neterr", "error"):
             if ev[1] != self.cap_id or not self.capturing:
                 return  # 已經被取消或過期的結果
@@ -204,6 +211,15 @@ class Voice:
             self.handle(ev[1])
             if not self.active and not self.quit:
                 self.idle()
+
+    def set_procs(self, procs):
+        """視窗上選了另一份對照表:之後比對、查詢都用新的項目,「重複」也不會念到舊檔的內容。"""
+        self.procs = procs
+        self.last = None
+        self.ui.heard(f"已載入新的對照表:{len(procs)} 個項目")
+        print(f"已換成新的對照表:{len(procs)} 個項目")
+        if not self.active:
+            self.idle()
 
     def control(self, ev):
         """「開始 / 停止」按鈕與模式切換。"""
@@ -329,6 +345,9 @@ class Voice:
             if kind == "quit":
                 self.quit = True
                 return None
+            if kind == "procs":  # 正在問「是不是…」時換了檔案:舊問題作廢
+                self.set_procs(ev[1])
+                return None
             if kind in ("mic", "mode"):
                 self.control(ev)
                 return None
@@ -379,13 +398,22 @@ def main():
         pick = lambda v: int(v) if v and v.isdigit() else v
         sd.default.device = (pick(args.in_device), pick(args.out_device))
 
-    procs = pr.load_procedures(find_excel(args.excel))
+    settings = Settings(app_dir() / "settings.json")
+    excel = find_excel(args.excel, settings.excel)
+    try:
+        procs = pr.load_procedures(excel)
+    except Exception as e:
+        if args.excel or str(excel) != settings.excel:
+            raise
+        # 上次選的檔案壞了或格式不對:不要讓程式打不開,改用預設的
+        print(f"[上次選的對照表無法載入({e}),改用預設]")
+        excel = find_excel(None, "")
+        procs = pr.load_procedures(excel)
     if args.list:
         for p in procs:
             print(f"{p.id}\t{p.name}\t別名:{'、'.join(p.aliases) or '-'}\t{len(p.steps)} 步")
         return
 
-    settings = Settings(app_dir() / "settings.json")
     speaker = Speaker(args.tts, settings.speed)
 
     def on_speed(level):  # 視窗上選了朗讀速度:立刻生效並記住
@@ -393,7 +421,7 @@ def main():
         settings.set(speed=level)
 
     listener = Listener(min_threshold=args.threshold)
-    ui = (NullUI if args.no_gui else WindowUI)(procs, settings, speaker.stop, on_speed)
+    ui = (NullUI if args.no_gui else WindowUI)(procs, settings, speaker.stop, on_speed, source=Path(excel).name)
     voice = Voice(procs, listener, speaker, ui, settings)
     print(f"已載入 {len(procs)} 個測試項目。" + ("Ctrl+C 可隨時結束。" if args.no_gui else "關閉視窗即可結束。"))
 
