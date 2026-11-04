@@ -174,7 +174,8 @@ class WindowUI(_Base):
         form.pack(side="bottom", fill="x", pady=(8, 0))
         self.var = tk.StringVar()
         self.var.trace_add("write", lambda *_: self._render())
-        self.entry = tk.Entry(form, textvariable=self.var, font=(FONT, 18))
+        # 輸入框、清單、步驟文字都明確指定白底黑字,不跟著系統(macOS 深色外觀下預設是白字,會看不到)
+        self.entry = tk.Entry(form, textvariable=self.var, font=(FONT, 18), bg="white", fg="black", insertbackground="black")
         self.entry.pack(side="left", fill="x", expand=True, ipady=6)
         self.entry.bind("<Return>", lambda _e: self._submit())
         self.list_btn = Button(form, text="清單", font=(FONT, 14), command=self._toggle_all)
@@ -220,7 +221,7 @@ class WindowUI(_Base):
         self.body.pack(fill="both", expand=True, padx=16, pady=(4, 0))
         self.title_lbl = tk.Label(self.body, text="", font=(FONT, 32, "bold"), anchor="w", justify="left")
         self.steps = tk.Text(self.body, font=(FONT, 24), wrap="word", relief="flat", state="disabled",
-                             cursor="arrow", spacing1=6, spacing3=10, padx=8)
+                             cursor="arrow", spacing1=6, spacing3=10, padx=8, bg="white", fg="black")
         self.steps.tag_configure("cur", background="#ffe08a", font=(FONT, 24, "bold"))
         self.steps_count = 0
 
@@ -232,7 +233,7 @@ class WindowUI(_Base):
         sb = tk.Scrollbar(rframe)
         sb.pack(side="right", fill="y")
         self.lb = tk.Listbox(rframe, font=(FONT, 20), activestyle="none", yscrollcommand=sb.set, selectbackground="#ffe08a",
-                             selectforeground="black", relief="solid", bd=1)
+                             selectforeground="black", relief="solid", bd=1, bg="white", fg="black")
         self.lb.pack(side="left", fill="both", expand=True)
         sb.config(command=self.lb.yview)
         self.lb.bind("<ButtonRelease-1>", self._on_pick)
@@ -240,6 +241,7 @@ class WindowUI(_Base):
         self.title_lbl.config(text="按下「開始」,然後說出測試項目名稱或編號")
         self._show_body(results=False)
         root.bind("<Configure>", self._on_resize)
+        root.after(200, self._fit_wrap)
         root.after(50, self._poll)
 
     # ───── 背景執行緒呼叫(實際更新交給主執行緒)─────
@@ -332,9 +334,13 @@ class WindowUI(_Base):
 
     def _on_resize(self, event):
         if event.widget is self.root:
-            wrap = max(240, event.width - 40)
-            for lbl in (self.heard_lbl, self.title_lbl, self.confirm_q):
-                lbl.config(wraplength=wrap)
+            self._fit_wrap()
+
+    def _fit_wrap(self):
+        # 用視窗現在的實際寬度(macOS 啟動時的第一個 Configure 事件寬度只有 1,不能拿來用)
+        wrap = max(240, self.root.winfo_width() - 40)
+        for lbl in (self.heard_lbl, self.title_lbl, self.confirm_q):
+            lbl.config(wraplength=wrap)
 
     def _paint_modes(self):
         for m, b in self.mode_btns.items():
@@ -362,6 +368,8 @@ class WindowUI(_Base):
         else:
             self.title_lbl.pack(fill="x")
             self.steps.pack(fill="both", expand=True)
+        # macOS 上剛重新排版的清單/文字區不會自己重畫(一片空白),馬上處理一次待辦的繪製
+        self.body.update_idletasks()
 
     def _render(self):
         res = build_results(self.procs, self.var.get(), self.list_all)
