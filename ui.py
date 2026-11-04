@@ -23,6 +23,37 @@ MODES = (("auto", "常開監聽"), ("tap", "點擊監聽"))
 SPEEDS = (("slow", "慢"), ("normal", "正常"), ("fast", "快"))
 
 
+class _LabelButton(tk.Label):
+    """macOS 的原生按鈕不理會 bg / fg(深色按鈕上的白字會變成白底白字看不到),所以用 Label 模擬按鈕。"""
+
+    def __init__(self, master, command=None, **kw):
+        kw.pop("activebackground", None)
+        kw.pop("activeforeground", None)
+        kw.setdefault("relief", "solid")
+        kw.setdefault("bd", 1)
+        kw.setdefault("padx", 10)
+        super().__init__(master, **kw)
+        self.command = command
+        self.bind("<ButtonPress-1>", lambda _e: self.config(relief="sunken"))
+        self.bind("<ButtonRelease-1>", self._release)
+
+    def configure(self, cnf=None, **kw):
+        kw.pop("activebackground", None)  # Label 沒有這兩個選項,和 tk.Button 共用的程式碼會帶進來
+        kw.pop("activeforeground", None)
+        return super().configure(cnf, **kw)
+
+    config = configure
+
+    def _release(self, event):
+        self.config(relief="solid")
+        if self.command and 0 <= event.x < self.winfo_width() and 0 <= event.y < self.winfo_height():
+            self.command()
+
+
+def Button(master, **kw):
+    return (_LabelButton if sys.platform == "darwin" else tk.Button)(master, **kw)
+
+
 def build_results(procs, query, list_all):
     """依輸入內容(或「清單」按鈕)決定要列出哪些項目。回傳 (標題, [Procedure]) 或 None(不需要清單)。"""
     q = query.strip()
@@ -126,14 +157,14 @@ class WindowUI(_Base):
         src.pack(side="bottom", fill="x", pady=(6, 0))
         self.src_lbl = tk.Label(src, text=self._source_text(source), font=(FONT, 11), anchor="w", fg="#555555")
         self.src_lbl.pack(side="left", fill="x", expand=True)
-        tk.Button(src, text="選擇檔案", font=(FONT, 11), command=self._choose_file).pack(side="right")
+        Button(src, text="選擇檔案", font=(FONT, 11), command=self._choose_file).pack(side="right")
 
         spd = tk.Frame(bottom)
         spd.pack(side="bottom", fill="x", pady=(6, 0))
         tk.Label(spd, text="朗讀速度", font=(FONT, 11)).pack(side="left", padx=(0, 8))
         self.speed_btns = {}
         for lv, label in SPEEDS:
-            b = tk.Button(spd, text=label, font=(FONT, 11), relief="solid", bd=1, width=6,
+            b = Button(spd, text=label, font=(FONT, 11), relief="solid", bd=1, width=6,
                           command=lambda lv=lv: self._set_speed(lv))
             b.pack(side="left")
             self.speed_btns[lv] = b
@@ -146,24 +177,24 @@ class WindowUI(_Base):
         self.entry = tk.Entry(form, textvariable=self.var, font=(FONT, 18))
         self.entry.pack(side="left", fill="x", expand=True, ipady=6)
         self.entry.bind("<Return>", lambda _e: self._submit())
-        self.list_btn = tk.Button(form, text="清單", font=(FONT, 14), command=self._toggle_all)
+        self.list_btn = Button(form, text="清單", font=(FONT, 14), command=self._toggle_all)
         self.list_btn.pack(side="left", padx=(8, 0))
         self.list_btn_bg = self.list_btn.cget("bg")  # 系統預設的按鈕底色(Windows 以外沒有 "SystemButtonFace" 這個顏色名)
-        tk.Button(form, text="查詢", font=(FONT, 14), command=self._submit).pack(side="left", padx=(8, 0))
+        Button(form, text="查詢", font=(FONT, 14), command=self._submit).pack(side="left", padx=(8, 0))
 
         bar = tk.Frame(bottom)
         bar.pack(side="bottom", fill="x", pady=(8, 0))
-        self.mic_btn = tk.Button(bar, text="開始", font=(FONT, 22, "bold"), fg="white", bg="#0b57d0",
+        self.mic_btn = Button(bar, text="開始", font=(FONT, 22, "bold"), fg="white", bg="#0b57d0",
                                  activebackground="#0b57d0", activeforeground="white",
                                  command=lambda: self.emit("mic", interrupt=True))
         self.mic_btn.pack(side="left", fill="x", expand=True, ipady=8)
-        tk.Button(bar, text="停止朗讀", font=(FONT, 14), command=lambda: on_interrupt and on_interrupt()).pack(side="left", padx=(8, 0), ipady=8)
+        Button(bar, text="停止朗讀", font=(FONT, 14), command=lambda: on_interrupt and on_interrupt()).pack(side="left", padx=(8, 0), ipady=8)
 
         modes = tk.Frame(bottom)
         modes.pack(side="bottom", fill="x")
         self.mode_btns = {}
         for m, label in MODES:
-            b = tk.Button(modes, text=label, font=(FONT, 13), relief="solid", bd=1,
+            b = Button(modes, text=label, font=(FONT, 13), relief="solid", bd=1,
                           command=lambda m=m: self.emit("mode", m, interrupt=True))
             b.pack(side="left", fill="x", expand=True)
             self.mode_btns[m] = b
@@ -174,9 +205,9 @@ class WindowUI(_Base):
         self.confirm_q.pack(fill="x", padx=10, pady=(8, 4))
         yn = tk.Frame(self.confirm, bg="#fff4e5")
         yn.pack(fill="x", padx=10, pady=(0, 10))
-        tk.Button(yn, text="是", font=(FONT, 22, "bold"), fg="white", bg="#1a7f37", activebackground="#1a7f37",
+        Button(yn, text="是", font=(FONT, 22, "bold"), fg="white", bg="#1a7f37", activebackground="#1a7f37",
                   activeforeground="white", command=lambda: self.emit("yes", interrupt=True)).pack(side="left", fill="x", expand=True, ipady=6, padx=(0, 6))
-        tk.Button(yn, text="不是", font=(FONT, 22, "bold"), fg="#c5221f", command=lambda: self.emit("no", interrupt=True)).pack(
+        Button(yn, text="不是", font=(FONT, 22, "bold"), fg="#c5221f", command=lambda: self.emit("no", interrupt=True)).pack(
             side="left", fill="x", expand=True, ipady=6, padx=(6, 0))
 
         # 上方與中間
