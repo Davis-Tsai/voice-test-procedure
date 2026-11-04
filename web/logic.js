@@ -43,9 +43,11 @@ export function parseRows(rows) {
     const name = get("name");
     if (!id && !name) continue;
     const aliases = get("aliases").split(/[;；,，、|\n]/).map((a) => a.trim()).filter(Boolean);
-    const steps = get("steps").split(/\r?\n/).map((s) => s.replace(STEP_PREFIX, "").trim()).filter(Boolean);
+    const lines = get("steps").split(/\r?\n/);
+    const steps = lines.map((s) => s.replace(STEP_PREFIX, "").trim()).filter(Boolean);
+    const rawSteps = lines.map((s) => s.trim()).filter(Boolean); // 原文(沒去掉開頭的 1. 或 第3步)
     procs.push({
-      id, name, aliases, steps,
+      id, name, aliases, steps, rawSteps,
       idKey: normalize(id),
       nameKeys: [name, ...aliases].map(normalize).filter(Boolean),
     });
@@ -53,7 +55,10 @@ export function parseRows(rows) {
   return procs;
 }
 
-/** 從存檔的 JSON 還原(只存 id/name/aliases/steps,比對用的欄位重算)。 */
+/** 要顯示、朗讀的步驟:自動加編號時用去掉開頭編號的版本,不加編號(念文章)時用原文。舊存檔沒有原文就用 steps。 */
+export const stepsFor = (p, numbered = true) => (numbered || !p.rawSteps?.length ? p.steps : p.rawSteps);
+
+/** 從存檔的 JSON 還原(只存 id/name/aliases/steps/rawSteps,比對用的欄位重算)。 */
 export function hydrate(list) {
   return list.map((p) => ({
     ...p,
@@ -229,10 +234,11 @@ export function spokenId(pid) {
  * numbered=false 時不念「共 N 個步驟」「第 N 步」,每一行就照原文念(拿來念文章)。
  */
 export function script(p, numbered = true) {
-  if (!numbered) return [`${spokenId(p.id)}。${p.name}。`, ...p.steps, "以上。"];
+  const steps = stepsFor(p, numbered);
+  if (!numbered) return [`${spokenId(p.id)}。${p.name}。`, ...steps, "以上。"];
   return [
-    `${spokenId(p.id)}。${p.name}。共 ${p.steps.length} 個步驟。`,
-    ...p.steps.map((s, i) => `第 ${i + 1} 步。${s}`),
+    `${spokenId(p.id)}。${p.name}。共 ${steps.length} 個步驟。`,
+    ...steps.map((s, i) => `第 ${i + 1} 步。${s}`),
     "以上。",
   ];
 }

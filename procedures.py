@@ -34,6 +34,11 @@ class Procedure:
     steps: list = field(default_factory=list)
     id_key: str = ""
     name_keys: list = field(default_factory=list)
+    raw_steps: list = field(default_factory=list)  # Excel 裡的原文(沒去掉開頭的 1. 或 第3步)
+
+    def steps_for(self, numbered=True):
+        """要顯示、朗讀的步驟:程式自動加編號時用去掉開頭編號的版本,不加編號(念文章)時用原文。"""
+        return self.steps if numbered or not self.raw_steps else self.raw_steps
 
 
 def normalize(text):
@@ -73,8 +78,9 @@ def load_procedures(path):
         if not pid and not name:
             continue
         aliases = [a.strip() for a in re.split(r"[;；,，、|\n]", get("aliases")) if a.strip()]
-        steps = [_STEP_PREFIX.sub("", s).strip() for s in get("steps").splitlines()]
-        p = Procedure(pid, name, aliases, [s for s in steps if s])
+        lines = get("steps").splitlines()
+        steps = [_STEP_PREFIX.sub("", s).strip() for s in lines]
+        p = Procedure(pid, name, aliases, [s for s in steps if s], raw_steps=[s.strip() for s in lines if s.strip()])
         p.id_key = normalize(pid)
         p.name_keys = [k for k in (normalize(x) for x in [name, *aliases]) if k]
         procs.append(p)

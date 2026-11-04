@@ -72,7 +72,7 @@ function showProc(p) {
   $("title").textContent = `${p.id}  ${p.name}`;
   const ol = $("steps");
   ol.classList.toggle("plain", !state.numbered);
-  ol.replaceChildren(...p.steps.map((s) => Object.assign(document.createElement("li"), { textContent: s })));
+  ol.replaceChildren(...L.stepsFor(p, state.numbered).map((s) => Object.assign(document.createElement("li"), { textContent: s })));
 }
 
 /** 段號 n:1~N 是步驟,其他(開頭、結尾)清掉標示。 */
@@ -160,7 +160,7 @@ function idleStatus() {
 // ───────────── 資料(Excel)─────────────
 
 function saveProcs(procs, source) {
-  const plain = procs.map(({ id, name, aliases, steps }) => ({ id, name, aliases, steps }));
+  const plain = procs.map(({ id, name, aliases, steps, rawSteps }) => ({ id, name, aliases, steps, rawSteps }));
   localStorage.setItem(KEY.procs, JSON.stringify(plain));
   localStorage.setItem(KEY.source, source);
 }
@@ -864,7 +864,7 @@ $("readHits").addEventListener("change", (e) => {
 $("numbered").addEventListener("change", (e) => {
   state.numbered = e.target.checked;
   localStorage.setItem(KEY.numbered, e.target.checked ? "1" : "0");
-  if (state.last) $("steps").classList.toggle("plain", !state.numbered); // 目前畫面上的項目馬上換
+  if (state.last) showProc(state.last); // 目前畫面上的項目馬上換成對應的版本(沒編號時是原文)
 });
 $("greetOn").addEventListener("change", (e) => {
   state.greetOn = e.target.checked;

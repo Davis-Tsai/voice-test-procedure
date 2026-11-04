@@ -109,7 +109,7 @@ class NullUI(_Base):
 
     def status(self, text, kind="idle"): pass
     def heard(self, text): pass
-    def show(self, proc): pass
+    def show(self, proc, numbered=True): pass
     def highlight(self, step): pass
     def show_confirm(self, question): print(question)
     def hide_confirm(self): pass
@@ -257,14 +257,14 @@ class WindowUI(_Base):
     def heard(self, text):
         self._post(lambda: self.heard_lbl.config(text=text))
 
-    def show(self, proc):
+    def show(self, proc, numbered=True):
         def do():
+            steps = proc.steps_for(numbered)  # 沒有編號時每一行就是原文(拿來念文章)
             self.title_lbl.config(text=f"{proc.id}  {proc.name}")
-            self.steps_count = len(proc.steps)
+            self.steps_count = len(steps)
             self.steps.config(state="normal")
             self.steps.delete("1.0", "end")
-            numbered = self.settings.numbered  # 沒有編號時每一行就是原文(拿來念文章)
-            self.steps.insert("1.0", "\n".join(f"{i}. {s}" if numbered else s for i, s in enumerate(proc.steps, 1)))
+            self.steps.insert("1.0", "\n".join(f"{i}. {s}" if numbered else s for i, s in enumerate(steps, 1)))
             self.steps.config(state="disabled")
         self._post(do)
 
