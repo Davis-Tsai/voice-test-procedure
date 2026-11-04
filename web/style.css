@@ -30,7 +30,7 @@ h1 { font-size: 2rem; line-height: 1.25; margin: 8px 0 12px; word-break: break-w
 #steps li.cur { background: var(--hl); font-weight: 700; }
 
 footer { border-top: 1px solid var(--line); padding: 10px 16px 12px; background: #fafafa; }
-.bar { display: flex; gap: 10px; }
+.bar { display: flex; gap: 10px; align-items: center; } /* 右邊的「重複」「停止朗讀」維持和「查詢」一樣大,不跟著大按鈕拉高 */
 button, .fileBtn, select, input {
   font: inherit; font-size: 1rem; border-radius: 10px; border: 1px solid #c8c8cc; background: #fff; color: inherit;
 }

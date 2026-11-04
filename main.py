@@ -186,6 +186,14 @@ class Voice:
             self.control(ev)
         elif kind == "procs":
             self.set_procs(ev[1])
+        elif kind == "repeat":
+            self.stop_capture()
+            if self.mode == "tap":
+                self.active = False
+                self.sync_ui()
+            self.repeat_last()
+            if not self.active and not self.quit:
+                self.idle()
         elif kind in ("voice", "neterr", "error"):
             if ev[1] != self.cap_id or not self.capturing:
                 return  # 已經被取消或過期的結果
@@ -275,10 +283,7 @@ class Voice:
             self.ui.close()
             return
         if cmd == "repeat":
-            if self.last:
-                self.read(self.last)
-            else:
-                self.say(["還沒有可以重複的內容,請先說出測試項目。"])
+            self.repeat_last()
             return
         query = None if confident else pr.parse_query(heard)
         if query:
@@ -309,6 +314,13 @@ class Voice:
             return
         self.last = chosen
         self.read(chosen)
+
+    def repeat_last(self):
+        """重新朗讀上一個項目(說「重複」,或按「重複」按鈕)。"""
+        if self.last:
+            self.read(self.last)
+        else:
+            self.say(["還沒有可以重複的內容,請先說出測試項目。"])
 
     def wait_answer(self):
         """等「是 / 不是」:按畫面按鈕、打字,或(聆聽中)用說的。
@@ -350,6 +362,9 @@ class Voice:
                 continue
             if kind == "quit":
                 self.quit = True
+                return None
+            if kind == "repeat":  # 正在問「是不是…」時按了「重複」:問題作廢,交回主迴圈處理
+                self.ui.events.put(ev)
                 return None
             if kind == "procs":  # 正在問「是不是…」時換了檔案:舊問題作廢
                 self.set_procs(ev[1])

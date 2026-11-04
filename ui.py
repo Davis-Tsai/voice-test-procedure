@@ -5,6 +5,7 @@
   ("mode", "auto"|"tap")
   ("text", 字串)      打字查詢,或點了清單裡的項目(字串是項目編號)
   ("yes",) ("no",)    按了「是 / 不是」
+  ("repeat",)        按了「重複」(重新朗讀上一個項目)
   ("procs", 項目清單)  用「選擇檔案」換了一份對照表
   ("quit",)          關閉視窗
 """
@@ -192,7 +193,9 @@ class WindowUI(_Base):
                                  activebackground="#0b57d0", activeforeground="white",
                                  command=lambda: self.emit("mic", interrupt=True))
         self.mic_btn.pack(side="left", fill="x", expand=True, ipady=8)
-        Button(bar, text="停止朗讀", font=(FONT, 14), command=lambda: on_interrupt and on_interrupt()).pack(side="left", padx=(8, 0), ipady=8)
+        # 右邊兩顆和「查詢」一樣大(不再跟著大按鈕拉高)
+        Button(bar, text="重複", font=(FONT, 14), command=lambda: self.emit("repeat", interrupt=True)).pack(side="left", padx=(8, 0))
+        Button(bar, text="停止朗讀", font=(FONT, 14), command=lambda: on_interrupt and on_interrupt()).pack(side="left", padx=(8, 0))
 
         modes = tk.Frame(bottom)
         modes.pack(side="bottom", fill="x")

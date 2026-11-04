@@ -325,14 +325,15 @@ function getInput() {
       state.rec = null;
       resolve(v);
     };
-    state.typedResolve = (t, alts = [t]) => {
-      try { state.rec?.abort(); } catch { /* 已結束 */ }
-      finish({ text: t, alts });
+    state.typedResolve = (t, alts = [t], intent = null) => {
+      const rec = state.rec;
+      finish({ text: t, alts, intent }); // 先交出結果,再中止收音:中止若立刻觸發結束通知,才不會搶先把空結果送出去
+      try { rec?.abort(); } catch { /* 已結束 */ }
     };
     if (state.pending) {  // 朗讀時被打斷的輸入(打字或按住說話),這段就是下一次輸入
-      const { text, alts } = state.pending;
+      const { text, alts, intent } = state.pending;
       state.pending = null;
-      return state.typedResolve(text, alts);
+      return state.typedResolve(text, alts, intent);
     }
     if (!SR || state.mode === "ptt") return; // 按住說話模式:由按鈕送結果進來
 
@@ -447,6 +448,12 @@ async function handleQuery(q) {
   }
 }
 
+/** 重新朗讀上一個項目(說「重複」,或按「重複」按鈕)。 */
+async function repeatLast() {
+  if (state.last) await read(state.last);
+  else await say(["還沒有可以重複的內容,請先說出測試項目。"]);
+}
+
 async function handle(heard) {
   const procs = state.procs;
   const ranked = L.rank(heard, procs);
@@ -459,8 +466,7 @@ async function handle(heard) {
     return;
   }
   if (cmd === "repeat") {
-    if (state.last) await read(state.last);
-    else await say(["還沒有可以重複的內容,請先說出測試項目。"]);
+    await repeatLast();
     return;
   }
   const query = confident ? null : L.parseQuery(heard);
@@ -546,6 +552,11 @@ async function session() {
       await say(["辨識服務暫時連不上,請再說一次。"]);
       continue;
     }
+    if (r.intent === "repeat") { // 按了畫面上的「重複」按鈕:直接重念上一個項目,不必經過比對
+      setHeard("重複");
+      await repeatLast();
+      continue;
+    }
     const heard = pickAlt(r.alts ?? [], (t) => L.isConfident(L.rank(t, state.procs)) || L.command(t));
     if (!heard) continue;
     setHeard(`聽到:${heard}`);
@@ -575,12 +586,12 @@ function stopSession() {
 }
 
 /** 打字或按住說話送來的輸入,統一在這裡分流。alts: 辨識候選(打字就是一個字串)。 */
-async function submit(alts) {
+async function submit(alts, intent = null) {
   const text = alts[0];
   if (!text) return;
-  if (state.typedResolve) return state.typedResolve(text, alts); // 流程正在等輸入
-  if (state.active || state.awaitingAnswer) {                    // 正在朗讀/等回答:打斷它,下一次聆聽直接用這段
-    state.pending = { text, alts };
+  if (state.typedResolve) return state.typedResolve(text, alts, intent); // 流程正在等輸入
+  if (state.active || state.awaitingAnswer) {                            // 正在朗讀/等回答:打斷它,下一次聆聽直接用這段
+    state.pending = { text, alts, intent };
     stopSpeaking();
     return;
   }
@@ -588,6 +599,11 @@ async function submit(alts) {
   state.handling = true;
   stopSpeaking();
   try {
+    if (intent === "repeat") {
+      setHeard("重複");
+      await repeatLast();
+      return;
+    }
     const heard = pickAlt(alts, (t) => L.isConfident(L.rank(t, state.procs)) || L.command(t));
     setHeard(`${state.mode === "ptt" ? "聽到" : "輸入"}:${heard}`);
     await handle(heard);
@@ -785,6 +801,7 @@ $("micBtn").addEventListener("click", () => {
   else session();
 });
 $("stopSpeakBtn").addEventListener("click", stopSpeaking);
+$("repeatBtn").addEventListener("click", () => submit(["重複"], "repeat"));
 $("yesBtn").addEventListener("click", () => submit(["是"]));
 $("noBtn").addEventListener("click", () => submit(["不是"]));
 
