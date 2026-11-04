@@ -830,11 +830,12 @@ $("listBtn").addEventListener("click", () => {
 function setMode(mode, { save = true } = {}) {
   if (save) unlockSpeech(); // 使用者點了切換鈕:這是解鎖朗讀的好時機
   stopSession(); // 取消進行中的聆聽、朗讀與確認問題(一次性查詢也會被取消)
-  if (state.ptt) {
-    try { state.ptt.rec.abort(); } catch { /* 已結束 */ }
-    state.ptt.tooShort = true;
-    state.ptt.resolveEnded(); // 還沒真的開始的辨識不會有結束通知,不放行的話下一次會白等 1.5 秒
-    state.ptt = null;
+  const press = state.ptt;
+  if (press) {
+    press.tooShort = true; // 先標記:abort 之後收到的結束通知不要再當成一次查詢送出去
+    state.ptt = null;      // abort 若立刻觸發結束通知,pttFinished 會把 state.ptt 清掉,所以先自己清
+    try { press.rec.abort(); } catch { /* 已結束 */ }
+    press.resolveEnded(); // 還沒真的開始的辨識不會有結束通知,不放行的話下一次會白等 1.5 秒
   }
   state.mode = mode;
   if (save) localStorage.setItem(KEY.mode, mode);
