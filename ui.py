@@ -135,21 +135,22 @@ class WindowUI(_Base):
 
         root = self.root = tk.Tk()
         root.title("語音測試步驟")
-        root.attributes("-topmost", True)  # 永遠在其他視窗上面
-        width, height = 780, 780
+        root.attributes("-topmost", False)  # 暫時取消永遠置頂(試用中)
+        width = 780
+        height = min(780, root.winfo_screenheight() - 130)  # 留空間給工作列與標題列
         root.geometry(f"{width}x{height}+{max(0, root.winfo_screenwidth() - width - 20)}+30")
-        root.minsize(520, 560)
+        root.minsize(520, min(560, height))
         root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # 底部(先排,才不會被中間的內容擠掉)
         bottom = tk.Frame(root)
-        bottom.pack(side="bottom", fill="x", padx=16, pady=(4, 10))
+        bottom.pack(side="bottom", fill="x", padx=16, pady=(4, 6))
 
         self.intro_var = tk.BooleanVar(value=settings.intro)
         self.hits_var = tk.BooleanVar(value=settings.read_hits)
         self.num_var = tk.BooleanVar(value=settings.numbered)
         opts = tk.Frame(bottom)
-        opts.pack(side="bottom", fill="x", pady=(6, 0))
+        opts.pack(side="bottom", fill="x", pady=(2, 0))
         tk.Checkbutton(opts, text="第一次按「開始」念使用說明", variable=self.intro_var, font=(FONT, 11),
                        command=lambda: settings.set(intro=self.intro_var.get())).pack(side="left")
         tk.Checkbutton(opts, text="查詢找到 1~3 項時念出來", variable=self.hits_var, font=(FONT, 11),
@@ -158,13 +159,13 @@ class WindowUI(_Base):
                        command=lambda: settings.set(numbered=self.num_var.get())).pack(side="left")
 
         src = tk.Frame(bottom)
-        src.pack(side="bottom", fill="x", pady=(6, 0))
+        src.pack(side="bottom", fill="x", pady=(2, 0))
         self.src_lbl = tk.Label(src, text=self._source_text(source), font=(FONT, 11), anchor="w", fg="#555555")
         self.src_lbl.pack(side="left", fill="x", expand=True)
         Button(src, text="選擇檔案", font=(FONT, 11), command=self._choose_file).pack(side="right")
 
         spd = tk.Frame(bottom)
-        spd.pack(side="bottom", fill="x", pady=(6, 0))
+        spd.pack(side="bottom", fill="x", pady=(4, 0))
         tk.Label(spd, text="朗讀速度", font=(FONT, 11)).pack(side="left", padx=(0, 8))
         self.speed_btns = {}
         for lv, label in SPEEDS:
@@ -175,33 +176,33 @@ class WindowUI(_Base):
         self._paint_speeds()
 
         form = tk.Frame(bottom)
-        form.pack(side="bottom", fill="x", pady=(8, 0))
+        form.pack(side="bottom", fill="x", pady=(4, 0))
         self.var = tk.StringVar()
         self.var.trace_add("write", lambda *_: self._render())
         # 輸入框、清單、步驟文字都明確指定白底黑字,不跟著系統(macOS 深色外觀下預設是白字,會看不到)
-        self.entry = tk.Entry(form, textvariable=self.var, font=(FONT, 18), bg="white", fg="black", insertbackground="black")
-        self.entry.pack(side="left", fill="x", expand=True, ipady=6)
+        self.entry = tk.Entry(form, textvariable=self.var, font=(FONT, 13), bg="white", fg="black", insertbackground="black")
+        self.entry.pack(side="left", fill="x", expand=True, ipady=2)
         self.entry.bind("<Return>", lambda _e: self._submit())
-        self.list_btn = Button(form, text="清單", font=(FONT, 14), command=self._toggle_all)
+        self.list_btn = Button(form, text="清單", font=(FONT, 11), command=self._toggle_all)
         self.list_btn.pack(side="left", padx=(8, 0))
         self.list_btn_bg = self.list_btn.cget("bg")  # 系統預設的按鈕底色(Windows 以外沒有 "SystemButtonFace" 這個顏色名)
-        Button(form, text="查詢", font=(FONT, 14), command=self._submit).pack(side="left", padx=(8, 0))
+        Button(form, text="查詢", font=(FONT, 11), command=self._submit).pack(side="left", padx=(8, 0))
 
         bar = tk.Frame(bottom)
-        bar.pack(side="bottom", fill="x", pady=(8, 0))
-        self.mic_btn = Button(bar, text="開始", font=(FONT, 22, "bold"), fg="white", bg="#0b57d0",
+        bar.pack(side="bottom", fill="x", pady=(4, 0))
+        self.mic_btn = Button(bar, text="開始", font=(FONT, 16, "bold"), fg="white", bg="#0b57d0",
                                  activebackground="#0b57d0", activeforeground="white",
                                  command=lambda: self.emit("mic", interrupt=True))
-        self.mic_btn.pack(side="left", fill="x", expand=True, ipady=8)
+        self.mic_btn.pack(side="left", fill="x", expand=True, ipady=2)
         # 右邊兩顆和「查詢」一樣大(不再跟著大按鈕拉高)
-        Button(bar, text="重複", font=(FONT, 14), command=lambda: self.emit("repeat", interrupt=True)).pack(side="left", padx=(8, 0))
-        Button(bar, text="停止朗讀", font=(FONT, 14), command=lambda: on_interrupt and on_interrupt()).pack(side="left", padx=(8, 0))
+        Button(bar, text="重複", font=(FONT, 11), command=lambda: self.emit("repeat", interrupt=True)).pack(side="left", padx=(8, 0))
+        Button(bar, text="停止朗讀", font=(FONT, 11), command=lambda: on_interrupt and on_interrupt()).pack(side="left", padx=(8, 0))
 
         modes = tk.Frame(bottom)
         modes.pack(side="bottom", fill="x")
         self.mode_btns = {}
         for m, label in MODES:
-            b = Button(modes, text=label, font=(FONT, 13), relief="solid", bd=1,
+            b = Button(modes, text=label, font=(FONT, 11), relief="solid", bd=1,
                           command=lambda m=m: self.emit("mode", m, interrupt=True))
             b.pack(side="left", fill="x", expand=True)
             self.mode_btns[m] = b
@@ -218,17 +219,17 @@ class WindowUI(_Base):
             side="left", fill="x", expand=True, ipady=6, padx=(6, 0))
 
         # 上方與中間
-        self.status_lbl = tk.Label(root, text="尚未開始", font=(FONT, 22, "bold"), fg=COLORS["idle"], anchor="w")
-        self.status_lbl.pack(fill="x", padx=16, pady=(12, 0))
-        self.heard_lbl = tk.Label(root, text="", font=(FONT, 14), fg="#666666", anchor="w", justify="left")
+        self.status_lbl = tk.Label(root, text="尚未開始", font=(FONT, 16, "bold"), fg=COLORS["idle"], anchor="w")
+        self.status_lbl.pack(fill="x", padx=16, pady=(4, 0))
+        self.heard_lbl = tk.Label(root, text="", font=(FONT, 11), fg="#666666", anchor="w", justify="left")
         self.heard_lbl.pack(fill="x", padx=16)
 
         self.body = tk.Frame(root)
         self.body.pack(fill="both", expand=True, padx=16, pady=(4, 0))
-        self.title_lbl = tk.Label(self.body, text="", font=(FONT, 32, "bold"), anchor="w", justify="left")
-        self.steps = tk.Text(self.body, font=(FONT, 24), wrap="word", relief="flat", state="disabled",
+        self.title_lbl = tk.Label(self.body, text="", font=(FONT, 22, "bold"), anchor="w", justify="left")
+        self.steps = tk.Text(self.body, font=(FONT, 15), wrap="char", relief="flat", state="disabled",
                              cursor="arrow", spacing1=6, spacing3=10, padx=8, bg="white", fg="black")
-        self.steps.tag_configure("cur", background="#ffe08a", font=(FONT, 24, "bold"))
+        self.steps.tag_configure("cur", background="#ffe08a", font=(FONT, 15, "bold"))
         self.steps_count = 0
 
         self.results = tk.Frame(self.body)
@@ -238,7 +239,7 @@ class WindowUI(_Base):
         rframe.pack(fill="both", expand=True)
         sb = tk.Scrollbar(rframe)
         sb.pack(side="right", fill="y")
-        self.lb = tk.Listbox(rframe, font=(FONT, 20), activestyle="none", yscrollcommand=sb.set, selectbackground="#ffe08a",
+        self.lb = tk.Listbox(rframe, font=(FONT, 15), activestyle="none", yscrollcommand=sb.set, selectbackground="#ffe08a",
                              selectforeground="black", relief="solid", bd=1, bg="white", fg="black")
         self.lb.pack(side="left", fill="both", expand=True)
         sb.config(command=self.lb.yview)
