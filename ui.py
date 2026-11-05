@@ -1,4 +1,4 @@
-"""大字顯示視窗(永遠置頂)。語音流程在背景執行緒跑,視窗負責顯示並把使用者的操作放進 events 佇列。
+"""大字顯示視窗(一般視窗,不置頂)。語音流程在背景執行緒跑,視窗負責顯示並把使用者的操作放進 events 佇列。
 
 視窗送出的事件(都是 tuple,放在 ui.events):
   ("mic",)           按了「開始 / 停止」
@@ -135,7 +135,7 @@ class WindowUI(_Base):
 
         root = self.root = tk.Tk()
         root.title("語音測試步驟")
-        root.attributes("-topmost", False)  # 暫時取消永遠置頂(試用中)
+        root.attributes("-topmost", False)  # 不置頂,可被其他視窗蓋住
         width = 780
         height = min(780, root.winfo_screenheight() - 130)  # 留空間給工作列與標題列
         root.geometry(f"{width}x{height}+{max(0, root.winfo_screenwidth() - width - 20)}+30")
