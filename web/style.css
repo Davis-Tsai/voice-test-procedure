@@ -77,5 +77,5 @@ main.searching #title, main.searching #steps { display: none; }
 @media (min-width: 900px) {
   body { max-width: 900px; margin: 0 auto; }
   h1 { font-size: 2.4rem; }
-  #steps li { font-size: 1.9rem; line-height: 1.45; padding: 8px 10px; margin: 6px 0; border-radius: 8px; }
+  #steps li { font-size: 1.27rem; line-height: 1.45; padding: 8px 10px; margin: 6px 0; border-radius: 8px; }
 }
