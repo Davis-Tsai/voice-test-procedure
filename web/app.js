@@ -43,7 +43,7 @@ const state = {
   listAll: false,     // 「清單」按鈕:顯示全部項目
   greetOn: true,      // 是否念開場說明(設定裡可關閉)
   greeted: false,     // 這次開啟網頁後是否已念過開場說明,只念第一次
-  mode: "auto",       // "auto" 常開監聽 | "ptt" 按住說話
+  mode: "auto",       // "auto" 常開監聽 | "ptt" 按住說話(手機上是點擊監聽) | "tap" 點擊監聽(只有電腦有)
   ptt: null,          // 按住說話進行中的 {rec, startedAt, ...}
   prevEnded: null,    // 最近一次辨識(不論哪種模式)結束的 Promise,新的辨識要等它
   lastEndAt: 0,       // 最近一次辨識結束的時間
@@ -136,10 +136,14 @@ function showConfirm(question) {
 }
 const hideConfirm = () => { $("confirm").hidden = true; };
 
+// ptt 和 tap 都是「按鈕觸發的一次性收音」;手機的 ptt 本身就是點擊監聽,電腦的 tap 是另外加的點擊監聽
+const isPtt = () => state.mode === "ptt" || state.mode === "tap";
+const tapMode = () => isPhone || state.mode === "tap";
+
 function updateButtons() {
   const b = $("micBtn");
-  if (state.mode === "ptt") {
-    b.textContent = isPhone ? (state.ptt ? "停止" : "開始") : "按住說話";
+  if (isPtt()) {
+    b.textContent = tapMode() ? (state.ptt ? "停止" : "開始") : "按住說話";
     b.classList.toggle("on", !!state.ptt);
   } else {
     b.textContent = state.active ? "停止" : "開始";
@@ -148,11 +152,11 @@ function updateButtons() {
 }
 
 function idleStatus() {
-  if (state.mode === "ptt") setStatus(isPhone ? "按「開始」後說話" : "按住下方按鈕說話", "idle");
+  if (isPtt()) setStatus(tapMode() ? "按「開始」後說話" : "按住下方按鈕說話", "idle");
   else setStatus("尚未開始", "idle");
   if (!state.last) {
-    $("title").textContent = state.mode === "ptt"
-      ? (isPhone ? "按下「開始」,然後說出測試項目名稱或編號" : "按住下方按鈕,說出測試項目名稱或編號")
+    $("title").textContent = isPtt()
+      ? (tapMode() ? "按下「開始」,然後說出測試項目名稱或編號" : "按住下方按鈕,說出測試項目名稱或編號")
       : "按下「開始」,然後說出測試項目名稱或編號";
   }
 }
@@ -314,7 +318,7 @@ async function read(proc) {
 
 /** 回傳 {text, alts} | {needTap} | {network} | {fatal}。語音辨識與打字查詢誰先到用誰。 */
 function getInput() {
-  if (state.mode === "ptt") setStatus(isPhone ? "按「開始」後回答" : "按住下方按鈕回答", "listen");
+  if (isPtt()) setStatus(tapMode() ? "按「開始」後回答" : "按住下方按鈕回答", "listen");
   else setStatus("聆聽中…", "listen");
   return new Promise((resolve) => {
     let finished = false;
@@ -335,7 +339,7 @@ function getInput() {
       state.pending = null;
       return state.typedResolve(text, alts, intent);
     }
-    if (!SR || state.mode === "ptt") return; // 按住說話模式:由按鈕送結果進來
+    if (!SR || isPtt()) return; // 按住說話模式:由按鈕送結果進來
 
     const r = new SR();
     state.rec = r;
@@ -605,7 +609,7 @@ async function submit(alts, intent = null) {
       return;
     }
     const heard = pickAlt(alts, (t) => L.isConfident(L.rank(t, state.procs)) || L.command(t));
-    setHeard(`${state.mode === "ptt" ? "聽到" : "輸入"}:${heard}`);
+    setHeard(`${isPtt() ? "聽到" : "輸入"}:${heard}`);
     await handle(heard);
   } finally {
     if (run === state.runId) {
@@ -622,10 +626,10 @@ const MIN_HOLD_MS = 350;
 // 手機(iPhone、Android)一律用「點一下開始,說完停頓自動結束,再點一次可提早結束」:
 // iPhone 的 Safari 用 continuous 模式容易失敗(被靜音、沒偵測到說話),
 // Android 的 Chrome 用 continuous 模式會重複吐出累積的文字。電腦才用按住說話。
-const autoEnd = () => isPhone;
+const autoEnd = () => tapMode();
 
 async function pttStart() {
-  if (state.mode !== "ptt") return;
+  if (!isPtt()) return;
   if (state.ptt) { // 點一下模式進行中,再按一次 = 說完了
     if (state.ptt.tapMode) {
       if (!state.ptt.started) { // 第一次點擊還在等上一次辨識結束,還沒真的開始收音:直接取消
@@ -788,9 +792,9 @@ async function keepAwake() {
 // ───────────── 事件 ─────────────
 
 $("micBtn").addEventListener("click", () => {
-  if (state.mode === "ptt") {
-    // 手機:點一下開始、再點一下結束。click 才會被當成「使用者操作」,朗讀與收音都需要這個
-    if (isPhone) {
+  if (isPtt()) {
+    // 點擊監聽(手機、電腦的 tap 模式):點一下開始、再點一下結束。click 才會被當成「使用者操作」,朗讀與收音都需要這個
+    if (tapMode()) {
       dbg(state.ptt ? "click(結束)" : "click(開始)");
       if (!state.ptt) unlockSpeech();
       pttStart();
@@ -808,14 +812,14 @@ $("noBtn").addEventListener("click", () => submit(["不是"]));
 // 按住說話:按下開始、放開結束(用 pointer capture,手指滑出按鈕也會收到放開事件)
 const mic = $("micBtn");
 mic.addEventListener("pointerdown", (e) => {
-  if (state.mode !== "ptt" || isPhone) return;
+  if (state.mode !== "ptt" || tapMode()) return;
   e.preventDefault();
   dbg(`pointerdown(${e.pointerType})`);
   try { mic.setPointerCapture(e.pointerId); } catch { /* 不支援就算了 */ }
   pttStart();
 });
 ["pointerup", "pointercancel"].forEach((t) => mic.addEventListener(t, () => {
-  if (state.mode !== "ptt" || isPhone) return;
+  if (state.mode !== "ptt" || tapMode()) return;
   dbg(t);
   pttEnd();
 }));
@@ -859,7 +863,7 @@ function setMode(mode, { save = true } = {}) {
   state.mode = mode;
   if (save) localStorage.setItem(KEY.mode, mode);
   document.querySelectorAll('input[name="mode"]').forEach((r) => { r.checked = r.value === mode; });
-  mic.classList.toggle("ptt", mode === "ptt");
+  mic.classList.toggle("ptt", mode !== "auto");
   showNotice("");
   updateButtons();
   idleStatus();
@@ -920,8 +924,11 @@ dbg(`isPhone=${isPhone} isIOS=${isIOS} touch=${navigator.maxTouchPoints} UA=${na
 if (isPhone) {
   const label = document.querySelector('input[name="mode"][value="ptt"] + span');
   if (label) label.textContent = "點擊監聽";
+  document.querySelector('input[name="mode"][value="tap"]')?.closest("label").remove(); // 手機的按住說話本來就是點擊監聽,不用兩個
   $("typedHint").hidden = false; // 手機鍵盤有聽寫:提示放在輸入框下面(可換行),輸入框裡的提示字保持簡短
 }
-setMode(localStorage.getItem(KEY.mode) || (isIOS ? "ptt" : "auto"), { save: false });
+let savedMode = localStorage.getItem(KEY.mode) || (isIOS ? "ptt" : "auto");
+if (isPhone && savedMode === "tap") savedMode = "ptt"; // 手機沒有 tap 這個選項
+setMode(savedMode, { save: false });
 
 loadInitial().then(updateButtons);
